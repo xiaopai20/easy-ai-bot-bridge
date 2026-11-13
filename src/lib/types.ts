@@ -1,3 +1,5 @@
+export type ChannelPlatform = "slack" | "widget" | "telegram";
+
 export interface Sender {
   id: string;
   displayName?: string;
@@ -21,12 +23,15 @@ export interface NormalizedMessage {
 }
 
 export interface ForwardJob {
+  tenantId: string;
+  botId?: string;
   message: NormalizedMessage;
   targetWebhookUrl: string;
   targetId?: string;
 }
 
 export interface RouteRecord {
+  tenantId: string;
   platform: string;
   workspaceId: string;
   /** Channel id, or "*" for a workspace-wide default. */
@@ -42,6 +47,7 @@ export interface Route {
 }
 
 export interface ThreadRecord {
+  tenantId: string;
   threadId: string;
   platform: string;
   workspaceId: string;
@@ -52,11 +58,65 @@ export interface ThreadRecord {
   expiresAt: number;
 }
 
+export interface TenantRecord {
+  tenantId: string;
+  ownerUserId: string;
+  ownerEmail: string;
+  createdAt: string;
+}
+
+export interface BotRecord {
+  tenantId: string;
+  botId: string;
+  name: string;
+  webhookUrl: string;
+  createdAt: string;
+}
+
+export interface ChannelRecord {
+  tenantId: string;
+  channelId: string;
+  platform: ChannelPlatform;
+  name: string;
+  botId: string;
+  enabled: boolean;
+  slackTeamId?: string;
+  slackTeamName?: string;
+  slackBotUserId?: string;
+  widgetToken?: string;
+  createdAt: string;
+}
+
+export interface SlackTeamMapping {
+  teamId: string;
+  tenantId: string;
+  channelId: string;
+  slackBotUserId?: string;
+}
+
+export interface WidgetTokenMapping {
+  token: string;
+  tenantId: string;
+  channelId: string;
+}
+
+export interface InboxMessage {
+  tenantId: string;
+  threadId: string;
+  messageId: string;
+  role: "user" | "bot";
+  text: string;
+  sentAt: string;
+  expiresAt: number;
+}
+
 export interface BridgeSecrets {
   slackSigningSecret: string;
-  slackBotToken: string;
-  targetWebhookKey: string;
   callbackSigningSecret: string;
+  slackBotToken?: string;
+  targetWebhookKey?: string;
+  slackClientId?: string;
+  slackClientSecret?: string;
   targetWebhookKeys?: Record<string, string>;
 }
 
@@ -64,10 +124,16 @@ export interface RuntimeConfig {
   eventsTable: string;
   threadsTable: string;
   routesTable: string;
+  directoryTable: string;
+  inboxTable: string;
   queueUrl: string;
   secretArn: string;
   replyUrl: string;
-  defaultTargetWebhookUrl?: string;
+  apiUrl: string;
+  dashboardUrl: string;
+  tenantSecretPrefix: string;
+  tenantKmsKeyId?: string;
+  corsOrigin: string;
   slackBotUserId?: string;
   eventTtlSeconds: number;
   threadTtlSeconds: number;
@@ -90,4 +156,10 @@ export interface BotWebhookPayload {
   };
   reply_url: string;
   reply_token: string;
+}
+
+export interface Actor {
+  userId: string;
+  email: string;
+  name: string;
 }

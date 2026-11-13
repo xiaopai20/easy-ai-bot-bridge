@@ -22,6 +22,10 @@ export function parseSecrets(raw: string): BridgeSecrets {
     }
     return value;
   };
+  const optional = (key: string): string | undefined => {
+    const value = obj[key];
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+  };
 
   let targetWebhookKeys: Record<string, string> | undefined;
   if (obj.targetWebhookKeys && typeof obj.targetWebhookKeys === "object") {
@@ -35,14 +39,16 @@ export function parseSecrets(raw: string): BridgeSecrets {
 
   return {
     slackSigningSecret: required("slackSigningSecret"),
-    slackBotToken: required("slackBotToken"),
-    targetWebhookKey: required("targetWebhookKey"),
     callbackSigningSecret: required("callbackSigningSecret"),
+    slackBotToken: optional("slackBotToken"),
+    targetWebhookKey: optional("targetWebhookKey"),
+    slackClientId: optional("slackClientId"),
+    slackClientSecret: optional("slackClientSecret"),
     targetWebhookKeys,
   };
 }
 
-export function webhookKeyForTarget(secrets: BridgeSecrets, targetId?: string): string {
+export function webhookKeyForTarget(secrets: BridgeSecrets, targetId?: string): string | undefined {
   if (targetId && secrets.targetWebhookKeys?.[targetId]) {
     return secrets.targetWebhookKeys[targetId];
   }

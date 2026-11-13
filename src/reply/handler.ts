@@ -9,6 +9,7 @@ import {
   parseJsonBody,
   rawBody,
 } from "../lib/http";
+import { newId } from "../lib/keys";
 import { verifyReplyToken } from "../lib/reply-token";
 import { createRuntimeContext } from "../runtime";
 
@@ -48,35 +49,52 @@ async function reply(ctx: AppContext, event: APIGatewayProxyEventV2): Promise<AP
   }
 
   const secrets = await ctx.getSecrets();
-  verifyReplyToken({
+  const claims = verifyReplyToken({
     token,
     threadId,
     secret: secrets.callbackSigningSecret,
     nowMs: ctx.now(),
   });
+  if (!threadId.startsWith(`${claims.tenantId}:`)) {
+    throw new HttpError(401, "Reply token does not match tenant");
+  }
 
-  const mapping = await ctx.stores.getThread(threadId);
-  if (!mapping) {
+  const mapping = await ctx.stores.getThread(claims.tenantId, threadId);
+  if (!mapping || mapping.tenantId !== claims.tenantId) {
     throw new HttpError(404, "Unknown thread");
   }
 
-  const adapter = getAdapter(mapping.platform);
-  await adapter.postReply({
-    target: {
-      workspaceId: mapping.workspaceId,
-      channelId: mapping.channelId,
-      threadTs: mapping.threadTs,
-    },
-    text,
-    credentials: {
-      slackBotToken: secrets.slackBotToken,
-    },
-    fetchFn: ctx.fetch,
-  });
+  if (mapping.platform === "widget") {
+    await ctx.stores.putInboxMessage({
+      tenantId: claims.tenantId,
+      threadId,
+      messageId: newId("m"),
+      role: "bot",
+      text,
+      sentAt: new Date(ctx.now()).toISOString(),
+      expiresAt: Math.floor(ctx.now() / 1000) + ctx.config.threadTtlSeconds,
+    });
+  } else {
+    const slackToken =
+      (await ctx.tenantSecrets.getSlackToken(claims.tenantId, mapping.workspaceId)) ??
+      secrets.slackBotToken;
+    const adapter = getAdapter(mapping.platform);
+    await adapter.postReply({
+      target: {
+        workspaceId: mapping.workspaceId,
+        channelId: mapping.channelId,
+        threadTs: mapping.threadTs,
+      },
+      text,
+      credentials: { slackBotToken: slackToken },
+      fetchFn: ctx.fetch,
+    });
+  }
 
   console.log(
     JSON.stringify({
       msg: "reply_posted",
+      tenantId: claims.tenantId,
       threadId,
       platform: mapping.platform,
       channelId: mapping.channelId,

@@ -10,10 +10,26 @@ export class HttpError extends Error {
   }
 }
 
-export function json(statusCode: number, body: unknown): APIGatewayProxyStructuredResultV2 {
+export function corsHeaders(origin?: string): Record<string, string> {
+  return {
+    "access-control-allow-origin": origin && origin.length > 0 ? origin : "*",
+    "access-control-allow-headers": "content-type,authorization",
+    "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "access-control-allow-credentials": origin && origin !== "*" ? "true" : "false",
+  };
+}
+
+export function json(
+  statusCode: number,
+  body: unknown,
+  origin?: string,
+): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
-    headers: { "content-type": "application/json; charset=utf-8" },
+    headers: {
+      "content-type": "application/json; charset=utf-8",
+      ...corsHeaders(origin),
+    },
     body: JSON.stringify(body),
   };
 }
@@ -64,10 +80,20 @@ export function parseJsonBody(raw: string): unknown {
   }
 }
 
-export function handleError(err: unknown): APIGatewayProxyStructuredResultV2 {
+export function handleError(err: unknown, origin?: string): APIGatewayProxyStructuredResultV2 {
   if (err instanceof HttpError) {
-    return json(err.statusCode, { error: err.message });
+    return json(err.statusCode, { error: err.message }, origin);
   }
   console.error("unhandled_error", err instanceof Error ? err.message : err);
-  return json(500, { error: "Internal server error" });
+  return json(500, { error: "Internal server error" }, origin);
+}
+
+export function queryParam(event: APIGatewayProxyEventV2, name: string): string | undefined {
+  const value = event.queryStringParameters?.[name];
+  return value && value.length > 0 ? value : undefined;
+}
+
+export function pathParts(event: APIGatewayProxyEventV2): string[] {
+  const path = event.rawPath ?? event.requestContext?.http?.path ?? "";
+  return path.split("/").filter(Boolean);
 }

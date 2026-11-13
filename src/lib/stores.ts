@@ -1,20 +1,69 @@
-import type { ForwardJob, RouteRecord, ThreadRecord } from "./types";
+import type {
+  BotRecord,
+  ChannelRecord,
+  ForwardJob,
+  InboxMessage,
+  RouteRecord,
+  SlackTeamMapping,
+  TenantRecord,
+  ThreadRecord,
+  WidgetTokenMapping,
+} from "./types";
 
 export interface Stores {
   tryRecordEvent(
+    tenantId: string,
     platform: string,
     eventId: string,
     ttlSeconds: number,
     nowMs: number,
   ): Promise<boolean>;
-  deleteEvent(platform: string, eventId: string): Promise<void>;
+  deleteEvent(tenantId: string, platform: string, eventId: string): Promise<void>;
   getRouteRecord(
+    tenantId: string,
     platform: string,
     workspaceId: string,
     channelId: string,
   ): Promise<RouteRecord | null>;
+  putRoute(record: RouteRecord): Promise<void>;
+  deleteRoute(tenantId: string, platform: string, workspaceId: string, channelId: string): Promise<void>;
   putThread(record: ThreadRecord): Promise<void>;
-  getThread(threadId: string): Promise<ThreadRecord | null>;
+  getThread(tenantId: string, threadId: string): Promise<ThreadRecord | null>;
+
+  getTenant(tenantId: string): Promise<TenantRecord | null>;
+  putTenant(record: TenantRecord): Promise<void>;
+  getUserTenantId(userId: string): Promise<string | null>;
+  putUserTenant(userId: string, tenantId: string): Promise<void>;
+
+  putBot(record: BotRecord): Promise<void>;
+  getBot(tenantId: string, botId: string): Promise<BotRecord | null>;
+  listBots(tenantId: string): Promise<BotRecord[]>;
+  deleteBot(tenantId: string, botId: string): Promise<void>;
+
+  putChannel(record: ChannelRecord): Promise<void>;
+  getChannel(tenantId: string, channelId: string): Promise<ChannelRecord | null>;
+  listChannels(tenantId: string): Promise<ChannelRecord[]>;
+  deleteChannel(tenantId: string, channelId: string): Promise<void>;
+
+  getSlackTeamMapping(teamId: string): Promise<SlackTeamMapping | null>;
+  putSlackTeamMapping(mapping: SlackTeamMapping): Promise<void>;
+  deleteSlackTeamMapping(teamId: string): Promise<void>;
+
+  getWidgetTokenMapping(token: string): Promise<WidgetTokenMapping | null>;
+  putWidgetTokenMapping(mapping: WidgetTokenMapping): Promise<void>;
+  deleteWidgetTokenMapping(token: string): Promise<void>;
+
+  putInboxMessage(message: InboxMessage): Promise<void>;
+  listInboxMessages(tenantId: string, threadId: string): Promise<InboxMessage[]>;
 }
 
 export type EnqueueFn = (job: ForwardJob) => Promise<void>;
+
+export interface TenantSecrets {
+  putBotKey(tenantId: string, botId: string, key: string): Promise<void>;
+  getBotKey(tenantId: string, botId: string): Promise<string | null>;
+  deleteBotKey(tenantId: string, botId: string): Promise<void>;
+  putSlackToken(tenantId: string, teamId: string, token: string): Promise<void>;
+  getSlackToken(tenantId: string, teamId: string): Promise<string | null>;
+  deleteSlackToken(tenantId: string, teamId: string): Promise<void>;
+}

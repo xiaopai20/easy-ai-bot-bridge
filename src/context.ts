@@ -1,8 +1,9 @@
-import type { BridgeSecrets, RuntimeConfig } from "./lib/types";
-import type { EnqueueFn, Stores } from "./lib/stores";
+import type { Actor, BridgeSecrets, RuntimeConfig } from "./lib/types";
+import type { EnqueueFn, Stores, TenantSecrets } from "./lib/stores";
 
 export interface AppContext {
   stores: Stores;
+  tenantSecrets: TenantSecrets;
   enqueue: EnqueueFn;
   getSecrets: () => Promise<BridgeSecrets>;
   fetch: typeof fetch;
@@ -10,9 +11,15 @@ export interface AppContext {
   config: Pick<
     RuntimeConfig,
     | "replyUrl"
-    | "defaultTargetWebhookUrl"
+    | "apiUrl"
+    | "dashboardUrl"
+    | "corsOrigin"
     | "slackBotUserId"
     | "eventTtlSeconds"
     | "threadTtlSeconds"
   >;
+}
+
+export interface RequestIdentity {
+  actorFromEvent?: (event: { headers?: Record<string, string | undefined>; requestContext?: unknown }) => Actor | null;
 }

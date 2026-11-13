@@ -19,8 +19,12 @@ export async function processForwardJob(ctx: AppContext, job: ForwardJob): Promi
   if (!ctx.config.replyUrl) {
     throw new Error("REPLY_URL is not configured");
   }
+  if (!job.tenantId) {
+    throw new Error("Forward job missing tenantId");
+  }
   const secrets = await ctx.getSecrets();
   const replyToken = issueReplyToken({
+    tenantId: job.tenantId,
     threadId: job.message.threadId,
     secret: secrets.callbackSigningSecret,
     nowMs: ctx.now(),
@@ -30,7 +34,16 @@ export async function processForwardJob(ctx: AppContext, job: ForwardJob): Promi
     replyUrl: ctx.config.replyUrl,
     replyToken,
   });
-  const bearer = webhookKeyForTarget(secrets, job.targetId);
+
+  const tenantKey = job.botId
+    ? await ctx.tenantSecrets.getBotKey(job.tenantId, job.botId)
+    : job.targetId
+      ? await ctx.tenantSecrets.getBotKey(job.tenantId, job.targetId)
+      : null;
+  const bearer = tenantKey ?? webhookKeyForTarget(secrets, job.targetId);
+  if (!bearer) {
+    throw new Error(`No webhook key for tenant ${job.tenantId} bot ${job.botId ?? job.targetId ?? ""}`);
+  }
 
   const response = await ctx.fetch(job.targetWebhookUrl, {
     method: "POST",
@@ -51,6 +64,7 @@ export async function processForwardJob(ctx: AppContext, job: ForwardJob): Promi
   console.log(
     JSON.stringify({
       msg: "forwarded",
+      tenantId: job.tenantId,
       threadId: job.message.threadId,
       eventId: job.message.eventId,
       targetId: job.targetId ?? null,

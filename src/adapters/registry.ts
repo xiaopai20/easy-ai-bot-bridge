@@ -1,10 +1,12 @@
 import { slackAdapter } from "./slack";
 import { telegramAdapter } from "./telegram";
+import { widgetAdapter } from "./widget";
 import type { PlatformAdapter } from "./types";
 
 const adapters: Record<string, PlatformAdapter> = {
   slack: slackAdapter,
   telegram: telegramAdapter,
+  widget: widgetAdapter,
 };
 
 export function getAdapter(platform: string): PlatformAdapter {
@@ -15,5 +17,5 @@ export function getAdapter(platform: string): PlatformAdapter {
   return adapter;
 }
 
-export { slackAdapter, telegramAdapter };
+export { slackAdapter, telegramAdapter, widgetAdapter };
 export type { PlatformAdapter } from "./types";

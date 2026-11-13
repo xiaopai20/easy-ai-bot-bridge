@@ -1,10 +1,10 @@
 /**
- * Upsert a routing row so a Slack workspace/channel maps to a target webhook.
+ * Upsert a tenant-scoped routing row so a Slack workspace/channel maps to a bot webhook.
  *
- *   ROUTES_TABLE=... WORKSPACE_ID=T0123 TARGET_WEBHOOK_URL=https://... \
+ *   ROUTES_TABLE=... TENANT_ID=t_... WORKSPACE_ID=T0123 TARGET_WEBHOOK_URL=https://... \
  *     npx tsx scripts/put-route.ts
  *
- * CHANNEL_ID defaults to * (all channels in the workspace).
+ * CHANNEL_ID defaults to * (all channels in the workspace). Prefer the dashboard.
  */
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
 import { DynamoDBDocumentClient, PutCommand } from "@aws-sdk/lib-dynamodb";
@@ -20,6 +20,7 @@ function required(name: string): string {
 
 async function main(): Promise<void> {
   const table = required("ROUTES_TABLE");
+  const tenantId = required("TENANT_ID");
   const platform = process.env.ROUTE_PLATFORM ?? "slack";
   const workspaceId = required("WORKSPACE_ID");
   const channelId = process.env.CHANNEL_ID ?? "*";
@@ -33,8 +34,9 @@ async function main(): Promise<void> {
   });
 
   const item = {
-    pk: routePk(platform, workspaceId),
+    pk: routePk(tenantId, platform, workspaceId),
     sk: routeSk(channelId),
+    tenantId,
     platform,
     workspaceId,
     channelId,

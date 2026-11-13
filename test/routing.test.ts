@@ -1,10 +1,17 @@
 import { lookupRoute, resolveRoute } from "../src/lib/routing";
 import { createIngestHandler } from "../src/ingest/handler";
-import { MemoryStores, createTestContext, slackEventEnvelope, signedSlackApiEvent } from "./helpers";
+import {
+  MemoryStores,
+  TENANT_A,
+  createTestContext,
+  slackEventEnvelope,
+  signedSlackApiEvent,
+} from "./helpers";
 import type { RouteRecord } from "../src/lib/types";
 
 function route(partial: Partial<RouteRecord> & Pick<RouteRecord, "channelId">): RouteRecord {
   return {
+    tenantId: TENANT_A,
     platform: "slack",
     workspaceId: "T0123456789",
     targetWebhookUrl: "https://bot.example/hook",
@@ -19,7 +26,6 @@ describe("resolveRoute", () => {
     const picked = resolveRoute({
       specific: route({ channelId: "C999", targetWebhookUrl: "https://channel.example", targetId: "channel" }),
       wildcard: route({ channelId: "*", targetWebhookUrl: "https://workspace.example", targetId: "ws" }),
-      defaultTargetWebhookUrl: "https://env.example",
     });
     expect(picked).toEqual({ targetWebhookUrl: "https://channel.example", targetId: "channel" });
   });
@@ -32,22 +38,12 @@ describe("resolveRoute", () => {
     expect(picked?.targetWebhookUrl).toBe("https://bot.example/hook");
   });
 
-  it("treats a disabled channel row as a mute (no wildcard/env fallback)", () => {
+  it("treats a disabled channel row as a mute (no wildcard fallback)", () => {
     const picked = resolveRoute({
       specific: route({ channelId: "C999", enabled: false }),
       wildcard: route({ channelId: "*" }),
-      defaultTargetWebhookUrl: "https://env.example",
     });
     expect(picked).toBeNull();
-  });
-
-  it("uses the env default when no DynamoDB row exists", () => {
-    const picked = resolveRoute({
-      specific: null,
-      wildcard: null,
-      defaultTargetWebhookUrl: "https://env.example",
-    });
-    expect(picked).toEqual({ targetWebhookUrl: "https://env.example", targetId: "default" });
   });
 
   it("returns null when nothing is configured", () => {
@@ -63,6 +59,7 @@ describe("lookupRoute + ingest", () => {
       route({ channelId: "C999", targetWebhookUrl: "https://channel.example", targetId: "channel" }),
     );
     const found = await lookupRoute(stores, {
+      tenantId: TENANT_A,
       platform: "slack",
       workspaceId: "T0123456789",
       channelId: "C999",
@@ -80,6 +77,7 @@ describe("lookupRoute + ingest", () => {
     expect(queue.jobs).toHaveLength(1);
     expect(queue.jobs[0].targetWebhookUrl).toBe("https://channel.example/hook");
     expect(queue.jobs[0].targetId).toBe("ops");
+    expect(queue.jobs[0].tenantId).toBe(TENANT_A);
   });
 
   it("ingest returns 200 and does not enqueue when no route matches", async () => {
@@ -91,12 +89,19 @@ describe("lookupRoute + ingest", () => {
     expect(queue.jobs).toHaveLength(0);
   });
 
-  it("ingest uses DEFAULT_TARGET_WEBHOOK_URL when the table is empty", async () => {
-    const { ctx, queue } = createTestContext({
-      defaultTargetWebhookUrl: "https://env.example/hook",
+  it("does not use another tenant's route for the same Slack team id", async () => {
+    const { ctx, queue, stores } = createTestContext();
+    stores.seedRoute({
+      tenantId: "t-other",
+      platform: "slack",
+      workspaceId: "T0123456789",
+      channelId: "*",
+      targetWebhookUrl: "https://other.example/hook",
+      enabled: true,
     });
     const handler = createIngestHandler(ctx);
-    await handler(signedSlackApiEvent(slackEventEnvelope()));
-    expect(queue.jobs[0].targetWebhookUrl).toBe("https://env.example/hook");
+    const result = await handler(signedSlackApiEvent(slackEventEnvelope()));
+    expect(JSON.parse(result.body ?? "{}").reason).toBe("no route");
+    expect(queue.jobs).toHaveLength(0);
   });
 });

@@ -2,8 +2,7 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from "
 import { getAdapter } from "../adapters/registry";
 import type { AppContext } from "../context";
 import { handleError, json, parseJsonBody, rawBody, text } from "../lib/http";
-import { lookupRoute } from "../lib/routing";
-import type { ForwardJob } from "../lib/types";
+import { enqueueInbound } from "../lib/pipeline";
 import { createRuntimeContext } from "../runtime";
 
 export function createIngestHandler(ctx: AppContext, platform = "slack") {
@@ -31,81 +30,33 @@ async function ingest(
     nowMs: ctx.now(),
   });
 
-  const parsed = adapter.parseInbound(parseJsonBody(body), {
+  const parsedPreview = adapter.parseInbound(parseJsonBody(body), {
     botUserId: ctx.config.slackBotUserId,
   });
-
-  if (parsed.kind === "challenge") {
-    return text(200, parsed.challenge);
+  if (parsedPreview.kind === "challenge") {
+    return text(200, parsedPreview.challenge);
   }
-  if (parsed.kind === "ignore") {
-    console.log(JSON.stringify({ msg: "ingest_ignore", platform, reason: parsed.reason }));
-    return json(200, { ok: true, ignored: true, reason: parsed.reason });
+  if (parsedPreview.kind === "ignore") {
+    console.log(JSON.stringify({ msg: "ingest_ignore", platform, reason: parsedPreview.reason }));
+    return json(200, { ok: true, ignored: true, reason: parsedPreview.reason });
   }
 
-  const message = parsed.message;
-  const route = await lookupRoute(ctx.stores, {
-    platform: message.platform,
-    workspaceId: message.conversation.workspaceId,
-    channelId: message.conversation.channelId,
-    defaultTargetWebhookUrl: ctx.config.defaultTargetWebhookUrl,
+  const workspaceId = parsedPreview.message.conversation.workspaceId;
+  const mapping = await ctx.stores.getSlackTeamMapping(workspaceId);
+  if (!mapping) {
+    console.log(JSON.stringify({ msg: "ingest_no_tenant", platform, workspaceId }));
+    return json(200, { ok: true, ignored: true, reason: "no tenant mapping" });
+  }
+
+  const parsed = adapter.parseInbound(parseJsonBody(body), {
+    botUserId: mapping.slackBotUserId ?? ctx.config.slackBotUserId,
   });
-  if (!route) {
-    console.log(
-      JSON.stringify({
-        msg: "ingest_no_route",
-        platform: message.platform,
-        workspaceId: message.conversation.workspaceId,
-        channelId: message.conversation.channelId,
-        eventId: message.eventId,
-      }),
-    );
-    return json(200, { ok: true, ignored: true, reason: "no route" });
+  if (parsed.kind !== "message") {
+    return json(200, { ok: true, ignored: true, reason: parsed.kind === "ignore" ? parsed.reason : "not a message" });
   }
 
-  const isNew = await ctx.stores.tryRecordEvent(
-    message.platform,
-    message.eventId,
-    ctx.config.eventTtlSeconds,
-    ctx.now(),
-  );
-  if (!isNew) {
-    console.log(JSON.stringify({ msg: "ingest_duplicate", eventId: message.eventId }));
-    return json(200, { ok: true, duplicate: true });
-  }
-
-  const job: ForwardJob = {
-    message,
-    targetWebhookUrl: route.targetWebhookUrl,
-    targetId: route.targetId,
-  };
-
-  try {
-    await ctx.stores.putThread({
-      threadId: message.threadId,
-      platform: message.platform,
-      workspaceId: message.conversation.workspaceId,
-      channelId: message.conversation.channelId,
-      threadTs: message.conversation.threadTs,
-      targetId: route.targetId,
-      createdAt: new Date(ctx.now()).toISOString(),
-      expiresAt: Math.floor(ctx.now() / 1000) + ctx.config.threadTtlSeconds,
-    });
-    await ctx.enqueue(job);
-  } catch (err) {
-    await ctx.stores.deleteEvent(message.platform, message.eventId);
-    throw err;
-  }
-
-  console.log(
-    JSON.stringify({
-      msg: "ingest_enqueued",
-      eventId: message.eventId,
-      threadId: message.threadId,
-      targetId: route.targetId ?? null,
-    }),
-  );
-  return json(200, { ok: true });
+  const result = await enqueueInbound(ctx, mapping.tenantId, parsed.message);
+  return json(200, result);
 }
 
 export const handler = createIngestHandler(createRuntimeContext());

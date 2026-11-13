@@ -4,6 +4,7 @@ import { createIngestHandler } from "../src/ingest/handler";
 import { createReplyHandler } from "../src/reply/handler";
 import { telegramAdapter } from "../src/adapters/telegram";
 import {
+  TENANT_A,
   TEST_SECRETS,
   createFetchRecorder,
   createTestContext,
@@ -11,12 +12,17 @@ import {
   slackEventEnvelope,
   signedSlackApiEvent,
 } from "./helpers";
+import { composeThreadId } from "../src/lib/keys";
+
+const PLATFORM_THREAD = "slack:T0123456789:C999:1731448800.000100";
+const THREAD_ID = composeThreadId(TENANT_A, PLATFORM_THREAD);
 
 describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
   it("forwards an app_mention and posts the bot reply on the same thread", async () => {
     const { fetchFn, calls } = createFetchRecorder();
     const { ctx, queue, stores } = createTestContext({ fetchFn });
     stores.seedRoute({
+      tenantId: TENANT_A,
       platform: "slack",
       workspaceId: "T0123456789",
       channelId: "*",
@@ -38,7 +44,8 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
 
     const job = queue.jobs[0];
     expect(job.message.text).toBe("What is the weather today?");
-    expect(job.message.threadId).toBe("slack:T0123456789:C999:1731448800.000100");
+    expect(job.message.threadId).toBe(THREAD_ID);
+    expect(job.tenantId).toBe(TENANT_A);
     expect(job.message.sentAt).toBe(new Date(1731448800 * 1000).toISOString());
     expect(job.targetWebhookUrl).toBe("https://grok.example/routine");
 
@@ -78,7 +85,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
       sender: { id: string };
     };
     expect(payload).toMatchObject({
-      thread: "slack:T0123456789:C999:1731448800.000100",
+      thread: THREAD_ID,
       text: "What is the weather today?",
       sent_at: new Date(1731448800 * 1000).toISOString(),
       platform: "slack",
@@ -114,6 +121,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     const { fetchFn, calls } = createFetchRecorder();
     const { ctx, queue, stores } = createTestContext({ fetchFn });
     stores.seedRoute({
+      tenantId: TENANT_A,
       platform: "slack",
       workspaceId: "T0123456789",
       channelId: "*",
@@ -184,6 +192,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     const { fetchFn, calls } = createFetchRecorder();
     const { ctx, queue, stores } = createTestContext({ fetchFn });
     stores.seedRoute({
+      tenantId: TENANT_A,
       platform: "slack",
       workspaceId: "T0123456789",
       channelId: "C999",
@@ -224,7 +233,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
       ],
     });
     const payload = JSON.parse(calls[0].body);
-    expect(payload.thread).toBe("slack:T0123456789:C999:1731448800.000100");
+    expect(payload.thread).toBe(THREAD_ID);
     expect(payload.conversation.thread_ts).toBe("1731448800.000100");
   });
 });

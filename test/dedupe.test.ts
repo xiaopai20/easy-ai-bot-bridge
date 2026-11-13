@@ -1,6 +1,7 @@
 import { createIngestHandler } from "../src/ingest/handler";
-import { eventPk } from "../src/lib/keys";
+import { composeThreadId, eventPk, threadPk } from "../src/lib/keys";
 import {
+  TENANT_A,
   createTestContext,
   slackEventEnvelope,
   signedSlackApiEvent,
@@ -9,6 +10,7 @@ import {
 function seedWorkspaceRoute() {
   const setup = createTestContext();
   setup.stores.seedRoute({
+    tenantId: TENANT_A,
     platform: "slack",
     workspaceId: "T0123456789",
     channelId: "*",
@@ -27,8 +29,9 @@ describe("event dedupe", () => {
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body ?? "{}")).toEqual({ ok: true });
     expect(queue.jobs).toHaveLength(1);
-    expect(stores.events.has(eventPk("slack", "EvNEW"))).toBe(true);
-    expect(stores.threads.has("slack:T0123456789:C999:1731448800.000100")).toBe(true);
+    expect(stores.events.has(eventPk(TENANT_A, "slack", "EvNEW"))).toBe(true);
+    const threadId = composeThreadId(TENANT_A, "slack:T0123456789:C999:1731448800.000100");
+    expect(stores.threads.has(threadPk(TENANT_A, threadId))).toBe(true);
   });
 
   it("ignores a duplicate event_id without enqueueing again", async () => {
@@ -49,7 +52,7 @@ describe("event dedupe", () => {
     const handler = createIngestHandler(ctx);
     const result = await handler(signedSlackApiEvent(slackEventEnvelope({ eventId: "EvFAIL" })));
     expect(result.statusCode).toBe(500);
-    expect(stores.events.has(eventPk("slack", "EvFAIL"))).toBe(false);
+    expect(stores.events.has(eventPk(TENANT_A, "slack", "EvFAIL"))).toBe(false);
     expect(queue.jobs).toHaveLength(0);
   });
 
@@ -74,6 +77,7 @@ describe("event dedupe", () => {
   it("ignores messages from the configured Slack bot user id", async () => {
     const { ctx, queue, stores } = createTestContext({ slackBotUserId: "UBOT" });
     stores.seedRoute({
+      tenantId: TENANT_A,
       platform: "slack",
       workspaceId: "T0123456789",
       channelId: "*",

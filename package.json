@@ -11,7 +11,9 @@
     "diff": "cdk diff",
     "deploy": "cdk deploy",
     "cdk": "cdk",
-    "put-route": "tsx scripts/put-route.ts"
+    "put-route": "tsx scripts/put-route.ts",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build"
   },
   "engines": {
     "node": ">=22"

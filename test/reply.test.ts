@@ -1,17 +1,20 @@
 import { createReplyHandler } from "../src/reply/handler";
+import { composeThreadId } from "../src/lib/keys";
 import { issueReplyToken } from "../src/lib/reply-token";
 import {
   NOW_MS,
+  TENANT_A,
   TEST_SECRETS,
   createFetchRecorder,
   createTestContext,
   replyApiEvent,
 } from "./helpers";
 
-const THREAD_ID = "slack:T0123456789:C999:1731448800.000100";
+const THREAD_ID = composeThreadId(TENANT_A, "slack:T0123456789:C999:1731448800.000100");
 
-function tokenFor(threadId = THREAD_ID, nowMs = NOW_MS): string {
+function tokenFor(threadId = THREAD_ID, nowMs = NOW_MS, tenantId = TENANT_A): string {
   return issueReplyToken({
+    tenantId,
     threadId,
     secret: TEST_SECRETS.callbackSigningSecret,
     nowMs,
@@ -21,7 +24,8 @@ function tokenFor(threadId = THREAD_ID, nowMs = NOW_MS): string {
 function seedThread() {
   const { fetchFn, calls } = createFetchRecorder();
   const setup = createTestContext({ fetchFn });
-  setup.stores.threads.set(THREAD_ID, {
+  void setup.stores.putThread({
+    tenantId: TENANT_A,
     threadId: THREAD_ID,
     platform: "slack",
     workspaceId: "T0123456789",
@@ -76,7 +80,7 @@ describe("reply path", () => {
       replyApiEvent({
         thread: THREAD_ID,
         text: "hi",
-        token: tokenFor("slack:T0123456789:C999:other"),
+        token: tokenFor(composeThreadId(TENANT_A, "slack:T0123456789:C999:other")),
       }),
     );
     expect(result.statusCode).toBe(401);
@@ -86,6 +90,7 @@ describe("reply path", () => {
     const { ctx } = seedThread();
     const handler = createReplyHandler(ctx);
     const expired = issueReplyToken({
+      tenantId: TENANT_A,
       threadId: THREAD_ID,
       secret: TEST_SECRETS.callbackSigningSecret,
       nowMs: NOW_MS - 8 * 24 * 60 * 60 * 1000,

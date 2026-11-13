@@ -7,13 +7,13 @@ import { loadConfigFromEnv } from "./lib/config";
 import { DynamoStores } from "./lib/dynamo";
 import { createSecretsLoader } from "./lib/secrets";
 import { createSqsEnqueue } from "./lib/sqs";
+import { MemoryTenantSecrets, SecretsManagerTenantSecrets } from "./lib/tenant-secrets";
+import type { Stores } from "./lib/stores";
 
 let cached: AppContext | undefined;
 
 export function createRuntimeContext(): AppContext {
   if (cached) return cached;
-  // Lambdas constructed at module load in tests without env should not
-  // connect to AWS until invoked. We still bind config lazily.
   cached = buildRuntimeContext();
   return cached;
 }
@@ -23,6 +23,7 @@ function buildRuntimeContext(): AppContext {
   if (!hasAwsEnv) {
     return {
       stores: missingStores(),
+      tenantSecrets: new MemoryTenantSecrets(),
       enqueue: async () => {
         throw new Error("Runtime context is not configured");
       },
@@ -33,6 +34,9 @@ function buildRuntimeContext(): AppContext {
       now: () => Date.now(),
       config: {
         replyUrl: "",
+        apiUrl: "",
+        dashboardUrl: "",
+        corsOrigin: "*",
         eventTtlSeconds: 172800,
         threadTtlSeconds: 7776000,
       },
@@ -52,14 +56,23 @@ function buildRuntimeContext(): AppContext {
       events: config.eventsTable,
       threads: config.threadsTable,
       routes: config.routesTable,
+      directory: config.directoryTable,
+      inbox: config.inboxTable,
     }),
+    tenantSecrets: new SecretsManagerTenantSecrets(
+      secrets,
+      config.tenantSecretPrefix,
+      config.tenantKmsKeyId,
+    ),
     enqueue: createSqsEnqueue(sqs, config.queueUrl),
     getSecrets: createSecretsLoader(secrets, config.secretArn),
     fetch,
     now: () => Date.now(),
     config: {
       replyUrl: config.replyUrl,
-      defaultTargetWebhookUrl: config.defaultTargetWebhookUrl,
+      apiUrl: config.apiUrl,
+      dashboardUrl: config.dashboardUrl,
+      corsOrigin: config.corsOrigin,
       slackBotUserId: config.slackBotUserId,
       eventTtlSeconds: config.eventTtlSeconds,
       threadTtlSeconds: config.threadTtlSeconds,
@@ -67,7 +80,7 @@ function buildRuntimeContext(): AppContext {
   };
 }
 
-function missingStores() {
+function missingStores(): Stores {
   const fail = async () => {
     throw new Error("Runtime context is not configured");
   };
@@ -75,7 +88,29 @@ function missingStores() {
     tryRecordEvent: fail,
     deleteEvent: fail,
     getRouteRecord: fail,
+    putRoute: fail,
+    deleteRoute: fail,
     putThread: fail,
     getThread: fail,
-  } as unknown as AppContext["stores"];
+    getTenant: fail,
+    putTenant: fail,
+    getUserTenantId: fail,
+    putUserTenant: fail,
+    putBot: fail,
+    getBot: fail,
+    listBots: fail,
+    deleteBot: fail,
+    putChannel: fail,
+    getChannel: fail,
+    listChannels: fail,
+    deleteChannel: fail,
+    getSlackTeamMapping: fail,
+    putSlackTeamMapping: fail,
+    deleteSlackTeamMapping: fail,
+    getWidgetTokenMapping: fail,
+    putWidgetTokenMapping: fail,
+    deleteWidgetTokenMapping: fail,
+    putInboxMessage: fail,
+    listInboxMessages: fail,
+  } as unknown as Stores;
 }
