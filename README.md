@@ -1,11 +1,11 @@
 # easy-ai-bot-bridge
 
 Serverless webhook bridge that lets chat platforms and bots that cannot talk
-directly (Slack today, Telegram later, Grok Bot routines, …) exchange messages.
+directly (Slack today, Telegram later, Grok Bot routines, ...) exchange messages.
 
 A Grok Bot connected to Slack natively only replies to its owner. This project
 gives you **your own Slack app**: anyone in the workspace can @-mention it, the
-bridge forwards the message to a Grok Bot routine webhook, and the bot’s answer
+bridge forwards the message to a Grok Bot routine webhook, and the bot's answer
 is posted back into the same Slack thread.
 
 The core is platform-agnostic. Each chat network is a thin adapter (verify
@@ -61,7 +61,7 @@ sequenceDiagram
 | Forwarder Lambda | POST JSON to the configured target webhook |
 | Reply Lambda | Validate HMAC reply token, load thread mapping, adapter `postReply` |
 | DynamoDB `events` | Dedupe keys, TTL ~48h |
-| DynamoDB `threads` | `platform` conversation → channel / `thread_ts` for replies, TTL ~90d |
+| DynamoDB `threads` | `platform` conversation -> channel / `thread_ts` for replies, TTL ~90d |
 | DynamoDB `routes` | Which target webhook handles which Slack workspace/channel |
 | Secrets Manager | Slack signing secret, bot token, target webhook key, callback signing secret |
 
@@ -70,8 +70,8 @@ sequenceDiagram
 - **HMAC reply tokens** (thread id + expiry, signed with `callbackSigningSecret`) instead of storing a random token per thread. Stateless, 7-day expiry. The `threads` table is still required so we know which Slack channel/`thread_ts` to post to.
 - **One Secrets Manager secret** (JSON object) rather than four secrets, so idle cost stays at one secret (~$0.40/month).
 - **Routes table + optional env default.** Channel row wins; a disabled channel row mutes that channel; workspace `channel#*` is next; `DEFAULT_TARGET_WEBHOOK_URL` is last.
-- Slack retries (`X-Slack-Retry-*`) are handled by **dedupe**, not by dropping retries. If enqueue fails, the dedupe row is deleted so Slack’s retry can succeed.
-- Lambdas run **arm64 / 256 MB**. Ingest timeout is 5s so Slack’s 3s ack budget is the real constraint (the handler only hits DynamoDB + SQS).
+- Slack retries (`X-Slack-Retry-*`) are handled by **dedupe**, not by dropping retries. If enqueue fails, the dedupe row is deleted so Slack's retry can succeed.
+- Lambdas run **arm64 / 256 MB**. Ingest timeout is 5s so Slack's 3s ack budget is the real constraint (the handler only hits DynamoDB + SQS).
 
 ## Adapter interface
 
@@ -105,7 +105,7 @@ The forwarder POSTs JSON to the target webhook with
 ```json
 {
   "thread": "slack:T0123456789:C0LAN2Q65:1731448800.000100",
-  "text": "今天天气怎么样？",
+  "text": "What is the weather today?",
   "sent_at": "2024-11-12T22:00:00.000Z",
   "platform": "slack",
   "sender": {
@@ -124,7 +124,7 @@ The forwarder POSTs JSON to the target webhook with
 ```
 
 `thread`, `text`, and `sent_at` are the fields already verified against a Grok
-Bot routine webhook (HTTP 200 in under 1s; Chinese text is fine). Extra fields
+Bot routine webhook (HTTP 200 in under 1s; UTF-8 text is fine). Extra fields
 tell the bot how to answer. Leading `<@UBOT>` mentions are stripped from `text`.
 
 If the Slack event already has a `thread_ts`, that is the conversation id (replies
@@ -145,7 +145,7 @@ THREAD="slack:T0123456789:C0LAN2Q65:1731448800.000100"
 curl -sS -X POST "$REPLY_URL" \
   -H "Authorization: Bearer $REPLY_TOKEN" \
   -H "Content-Type: application/json; charset=utf-8" \
-  -d "$(jq -n --arg thread "$THREAD" --arg text "今天晴，20°C。" '{thread:$thread, text:$text}')"
+  -d "$(jq -n --arg thread "$THREAD" --arg text "Sunny, 20C." '{thread:$thread, text:$text}')"
 ```
 
 Expected response: `{"ok":true}`. The bridge then calls Slack `chat.postMessage`
@@ -205,10 +205,10 @@ Per-target bearer keys: add `targetWebhookKeys` to the secret JSON
 
 1. [Create a Slack app](https://api.slack.com/apps) from scratch, in the
    workspace you want to serve.
-2. **OAuth & Permissions → Bot Token Scopes**
-   - `app_mentions:read` — inbound @-mentions in channels
-   - `chat:write` — post the bot’s reply
-   - `im:history` — DMs to the app (subscribe to `message.im`)
+2. **OAuth & Permissions -> Bot Token Scopes**
+   - `app_mentions:read` -- inbound @-mentions in channels
+   - `chat:write` -- post the bot's reply
+   - `im:history` -- DMs to the app (subscribe to `message.im`)
    - optional: `im:read`, `users:read` (display names later)
 3. **Event Subscriptions**
    - Enable events
@@ -220,9 +220,9 @@ Per-target bearer keys: add `targetWebhookKeys` to the secret JSON
      Manager before you set the Request URL**, otherwise verification fails.
 4. Install the app to the workspace. Copy:
    - **Signing Secret** (Basic Information)
-   - **Bot User OAuth Token** (`xoxb-…`)
-   - Bot user id (`U…` / `W…`) if you want ingest to drop the bot’s own
-     messages via `-c slackBotUserId=U…`
+   - **Bot User OAuth Token** (`xoxb-...`)
+   - Bot user id (`U...` / `W...`) if you want ingest to drop the bot's own
+     messages via `-c slackBotUserId=U...`
 5. Invite the bot to each channel it should hear: `/invite @YourBot`.
 6. Point the Events Request URL at the deployed API, then @-mention the bot.
 
@@ -235,7 +235,7 @@ Lambda, SQS, DynamoDB, Secrets Manager, IAM, and CloudWatch Logs, and a region
 ```bash
 npm ci
 npm test          # unit + mocked e2e
-npm run synth     # cdk synth — must complete cleanly
+npm run synth     # cdk synth -- must complete cleanly
 export CDK_DEFAULT_REGION=us-east-1
 npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$CDK_DEFAULT_REGION   # once per account/region
 npx cdk deploy \
@@ -264,14 +264,14 @@ Keep the generated `callbackSigningSecret`. Replace the `REPLACE_ME` values:
 ```bash
 aws secretsmanager get-secret-value --secret-id "$SECRET_ARN" \
   --query SecretString --output text > /tmp/bridge-secret.json
-# edit /tmp/bridge-secret.json — do not commit it
+# edit /tmp/bridge-secret.json -- do not commit it
 aws secretsmanager put-secret-value --secret-id "$SECRET_ARN" \
   --secret-string file:///tmp/bridge-secret.json
 rm /tmp/bridge-secret.json
 ```
 
 `targetWebhookKey` is the bearer token the **bridge sends** to the Grok Bot
-webhook (`Authorization: Bearer …`). `callbackSigningSecret` is used only to
+webhook (`Authorization: Bearer ...`). `callbackSigningSecret` is used only to
 sign `/reply` tokens.
 
 Then write a routes row (see [Configure a target](#configure-a-target)) and
@@ -292,9 +292,9 @@ Covered without AWS or Slack:
 - `event_id` dedupe (including enqueue-failure rollback)
 - Route lookup (channel / wildcard / env default / mute)
 - `/reply` HMAC token, 401/404, and `chat.postMessage` body
-- Mocked path: Slack `app_mention` → forwarded webhook JSON → `/reply` →
-  `chat.postMessage` with the right `channel` and `thread_ts` (including
-  Chinese text)
+- Mocked path: Slack `app_mention` -> forwarded webhook JSON -> `/reply` ->
+  `chat.postMessage` with the right `channel` and `thread_ts` (including a
+  non-ASCII UTF-8 round trip using escaped Unicode)
 
 ## AWS cost at low volume
 
@@ -315,7 +315,7 @@ DynamoDB, one secret, HTTP API, one SQS queue + DLQ, log retention 14 days.
 | Data transfer | ~$0 | Same-region |
 
 **Floor at zero traffic: ~$0.40/month.** At a few thousand messages, still
-about **$0.40–$1.00/month**. At 100k messages/month, still a few dollars;
+about **$0.40-$1.00/month**. At 100k messages/month, still a few dollars;
 revisit log volume and DynamoDB TTLs before anything else.
 
 ## Project layout
@@ -325,7 +325,7 @@ bin/app.ts                 CDK app
 lib/bridge-stack.ts        HTTP API, Lambdas, SQS, DynamoDB, secret
 src/adapters/              Slack + Telegram stub
 src/ingest/handler.ts      POST /slack/events
-src/forwarder/handler.ts   SQS → target webhook
+src/forwarder/handler.ts   SQS -> target webhook
 src/reply/handler.ts       POST /reply
 src/lib/                   routing, HMAC tokens, DynamoDB, secrets
 scripts/put-route.ts       upsert a routes table item

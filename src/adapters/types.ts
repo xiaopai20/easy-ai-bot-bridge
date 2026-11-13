@@ -1,6 +1,6 @@
 /**
  * Thin per-platform adapter. The ingest / forwarder / reply Lambdas stay
- * platform-agnostic; a new chat network (Telegram, Discord, …) only needs
+ * platform-agnostic; a new chat network (Telegram, Discord, ...) only needs
  * to implement this interface and register itself.
  */
 export interface VerifyRequestArgs {

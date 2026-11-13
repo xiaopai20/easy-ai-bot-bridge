@@ -5,7 +5,7 @@ import type { PlatformAdapter } from "./types";
  *
  * When adding Telegram:
  * 1. Verify the `X-Telegram-Bot-Api-Secret-Token` header (set when
- *    calling setWebhook) — or HMAC over the raw body if you terminate TLS
+ *    calling setWebhook) -- or HMAC over the raw body if you terminate TLS
  *    yourself.
  * 2. Parse `Update` JSON: use `message.message_id` / `message.chat.id`
  *    as the conversation identity, `message.text`, and `from` for sender.

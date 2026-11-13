@@ -38,7 +38,7 @@ describe("reply path", () => {
     const { ctx, calls } = seedThread();
     const handler = createReplyHandler(ctx);
     const result = await handler(
-      replyApiEvent({ thread: THREAD_ID, text: "晴天，适合出门。", token: tokenFor() }),
+      replyApiEvent({ thread: THREAD_ID, text: "Sunny, good day to go out.", token: tokenFor() }),
     );
     expect(result.statusCode).toBe(200);
     expect(JSON.parse(result.body ?? "{}")).toEqual({ ok: true });
@@ -48,7 +48,7 @@ describe("reply path", () => {
     expect(JSON.parse(calls[0].body)).toEqual({
       channel: "C999",
       thread_ts: "1731448800.000100",
-      text: "晴天，适合出门。",
+      text: "Sunny, good day to go out.",
     });
   });
 

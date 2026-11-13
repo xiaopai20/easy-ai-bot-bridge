@@ -28,7 +28,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     const ingest = createIngestHandler(ctx);
     const mention = slackEventEnvelope({
       eventId: "EvE2E1",
-      text: "<@UBOT> 今天天气怎么样？",
+      text: "<@UBOT> What is the weather today?",
       ts: "1731448800.000100",
       channel: "C999",
     });
@@ -37,7 +37,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     expect(queue.jobs).toHaveLength(1);
 
     const job = queue.jobs[0];
-    expect(job.message.text).toBe("今天天气怎么样？");
+    expect(job.message.text).toBe("What is the weather today?");
     expect(job.message.threadId).toBe("slack:T0123456789:C999:1731448800.000100");
     expect(job.message.sentAt).toBe(new Date(1731448800 * 1000).toISOString());
     expect(job.targetWebhookUrl).toBe("https://grok.example/routine");
@@ -79,7 +79,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     };
     expect(payload).toMatchObject({
       thread: "slack:T0123456789:C999:1731448800.000100",
-      text: "今天天气怎么样？",
+      text: "What is the weather today?",
       sent_at: new Date(1731448800 * 1000).toISOString(),
       platform: "slack",
       reply_url: "https://bridge.example/reply",
@@ -91,7 +91,7 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     const replyResult = await reply(
       replyApiEvent({
         thread: payload.thread,
-        text: "今天晴，20°C。",
+        text: "Sunny, 20C.",
         token: payload.reply_token,
       }),
     );
@@ -102,8 +102,82 @@ describe("mocked end-to-end Slack -> bot -> Slack thread", () => {
     expect(JSON.parse(slackCall?.body ?? "{}")).toEqual({
       channel: "C999",
       thread_ts: "1731448800.000100",
-      text: "今天晴，20°C。",
+      text: "Sunny, 20C.",
     });
+  });
+
+  it("preserves non-ASCII UTF-8 text through ingest, forward, and reply", async () => {
+    // Escaped so this source file stays ASCII. Runtime values are non-ASCII UTF-8.
+    const inbound = "\u4f60\u597d";
+    const outbound = "\u4f60\u597d \u{1F44B}";
+
+    const { fetchFn, calls } = createFetchRecorder();
+    const { ctx, queue, stores } = createTestContext({ fetchFn });
+    stores.seedRoute({
+      platform: "slack",
+      workspaceId: "T0123456789",
+      channelId: "*",
+      targetWebhookUrl: "https://grok.example/routine",
+      targetId: "default-grok",
+      enabled: true,
+    });
+
+    const ingest = createIngestHandler(ctx);
+    const ingestResult = await ingest(
+      signedSlackApiEvent(
+        slackEventEnvelope({
+          eventId: "EvUTF8",
+          text: `<@UBOT> ${inbound}`,
+          ts: "1731448800.000100",
+          channel: "C999",
+        }),
+      ),
+    );
+    expect(ingestResult.statusCode).toBe(200);
+    expect(queue.jobs[0].message.text).toBe(inbound);
+
+    await createForwarderHandler(ctx)({
+      Records: [
+        {
+          messageId: "m-utf8",
+          receiptHandle: "rh",
+          body: JSON.stringify(queue.jobs[0]),
+          attributes: {
+            ApproximateReceiveCount: "1",
+            SentTimestamp: "0",
+            SenderId: "test",
+            ApproximateFirstReceiveTimestamp: "0",
+          },
+          messageAttributes: {},
+          md5OfBody: "",
+          eventSource: "aws:sqs",
+          eventSourceARN: "arn:aws:sqs:us-east-1:123:queue",
+          awsRegion: "us-east-1",
+        },
+      ],
+    });
+
+    const webhookCall = calls.find((call) => call.url === "https://grok.example/routine");
+    const payload = JSON.parse(webhookCall?.body ?? "{}") as {
+      thread: string;
+      text: string;
+      reply_token: string;
+    };
+    expect(payload.text).toBe(inbound);
+
+    const replyResult = await createReplyHandler(ctx)(
+      replyApiEvent({
+        thread: payload.thread,
+        text: outbound,
+        token: payload.reply_token,
+      }),
+    );
+    expect(replyResult.statusCode).toBe(200);
+
+    const slackCall = calls.find((call) => call.url === "https://slack.com/api/chat.postMessage");
+    const posted = JSON.parse(slackCall?.body ?? "{}") as { text: string };
+    expect(posted.text).toBe(outbound);
+    expect(Buffer.byteLength(posted.text, "utf8")).toBeGreaterThan(posted.text.length);
   });
 
   it("threads a follow-up mention onto the parent thread_ts", async () => {
