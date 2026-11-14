@@ -1,20 +1,46 @@
 # easy-ai-bot-bridge
 
+This repository has two independent pieces:
+
+| Piece | Path | Status |
+| --- | --- | --- |
+| **Relay** | [`relay/slack-webhook-relay/`](relay/slack-webhook-relay/) | Active. Simple, one Slack workspace, one Lambda Function URL. |
+| **Bridge** | root CDK + `apps/web` | Paused. Multi-tenant hosted service (Google login, dashboard, DynamoDB, SQS). Kept for later. |
+
+A Grok Bot connected to Slack natively only replies to its owner. The **relay** is
+the path to use now: Slack Events API -> Lambda -> Grok Bot routine webhook; the bot
+posts back to Slack with `chat.postMessage`. See
+[`relay/slack-webhook-relay/README.md`](relay/slack-webhook-relay/README.md) for Slack
+app setup, deploy, and the routine prompt.
+
+```bash
+cd relay/slack-webhook-relay
+npm ci
+npm test
+npx cdk deploy
+```
+
+CloudFormation output **`FunctionUrl`** is the Slack Event Subscriptions Request URL.
+
+The rest of this file documents the multi-tenant **bridge**, which is not being
+deployed for now.
+
+## Multi-tenant bridge (paused)
+
 Hosted, multi-tenant webhook bridge. Anyone signs in with **Google** (no email/password
 accounts). A private tenant is created on first login. Inside a tenant you connect bots
 (webhook URL + bearer key) and channels (Slack via Add to Slack, an embeddable website
 widget, Telegram stub). Across tenants, nothing is shared.
 
-A Grok Bot connected to Slack natively only replies to its owner. This service gives
-each tenant their own Slack install: anyone in that workspace can @-mention the app, the
-bridge forwards the message to the linked bot webhook, and the bot's answer is posted
-back into the same Slack thread.
+This service would give each tenant their own Slack install: anyone in that workspace
+can @-mention the app, the bridge forwards the message to the linked bot webhook, and
+the bot's answer is posted back into the same Slack thread.
 
 The core is platform-agnostic. Each chat network is a thin adapter. Telegram is stubbed,
 not implemented.
 
-This repository does **not** deploy itself. You need an AWS account, one Slack app, and
-Google OAuth credentials; see [Deploy](#deploy).
+This repository does **not** deploy the bridge itself. You would need an AWS account,
+one Slack app, and Google OAuth credentials; see [Deploy](#deploy).
 
 ## Auth (Google only)
 
@@ -466,7 +492,8 @@ few thousand messages, still around a dollar plus those secrets.
 ## Project layout
 
 ```
-bin/app.ts                 CDK app
+relay/slack-webhook-relay/ Active single-workspace Slack -> Grok Bot relay
+bin/app.ts                 Bridge CDK app (paused)
 lib/bridge-stack.ts        HTTP API, Lambdas, SQS, DynamoDB, Cognito (Google only), KMS
 apps/web                   Next.js dashboard
 src/adapters/              Slack, widget, Telegram stub

@@ -13,7 +13,9 @@
     "cdk": "cdk",
     "put-route": "tsx scripts/put-route.ts",
     "web:dev": "npm --prefix apps/web run dev",
-    "web:build": "npm --prefix apps/web run build"
+    "web:build": "npm --prefix apps/web run build",
+    "relay:test": "npm --prefix relay/slack-webhook-relay test",
+    "relay:synth": "npm --prefix relay/slack-webhook-relay run synth"
   },
   "engines": {
     "node": ">=22"
