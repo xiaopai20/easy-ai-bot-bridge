@@ -44,6 +44,7 @@ function logOutcome(fields: Record<string, string | number | boolean | undefined
 }
 
 function isAllowed(config: RelayConfig, userId: number): boolean {
+  if (config.allowAllUsers) return true;
   return config.allowedUserIds.has(userId);
 }
 

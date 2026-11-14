@@ -12,7 +12,8 @@ export class TelegramWebhookRelayStack extends cdk.Stack {
     super(scope, id, props);
 
     const webhookUrl = String(this.node.tryGetContext("webhookUrl") ?? "REPLACE_ME");
-    const allowedUserIds = String(this.node.tryGetContext("allowedUserIds") ?? "REPLACE_ME");
+    const allowedUserIds = String(this.node.tryGetContext("allowedUserIds") ?? "");
+    const allowAllUsers = String(this.node.tryGetContext("allowAllUsers") ?? "");
 
     const secret = new secretsmanager.Secret(this, "RelaySecret", {
       description:
@@ -46,6 +47,7 @@ export class TelegramWebhookRelayStack extends cdk.Stack {
         SECRET_ARN: secret.secretArn,
         WEBHOOK_URL: webhookUrl,
         ALLOWED_USER_IDS: allowedUserIds,
+        ALLOW_ALL_USERS: allowAllUsers,
       },
       logGroup: new logs.LogGroup(this, "RelayFnLogs", {
         retention: logs.RetentionDays.ONE_WEEK,

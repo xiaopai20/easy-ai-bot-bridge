@@ -2,11 +2,18 @@ import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import { createHandler } from "../src/handler";
 import type { RelayConfig } from "../src/config";
 
-const CONFIG: RelayConfig = {
+const CONFIG_ALLOWLIST: RelayConfig = {
   telegramWebhookSecret: "telegram-secret-test",
   webhookUrl: "https://grok.example/routine",
   webhookKey: "webhook-key-test",
+  allowAllUsers: false,
   allowedUserIds: new Set([1001, 1002]),
+};
+
+const CONFIG_ALLOW_ALL: RelayConfig = {
+  ...CONFIG_ALLOWLIST,
+  allowAllUsers: true,
+  allowedUserIds: new Set(),
 };
 
 function telegramEvent(
@@ -14,7 +21,7 @@ function telegramEvent(
   args?: { headers?: Record<string, string>; secret?: string },
 ): APIGatewayProxyEventV2 {
   const raw = typeof body === "string" ? body : JSON.stringify(body);
-  const secret = args?.secret ?? CONFIG.telegramWebhookSecret;
+  const secret = args?.secret ?? CONFIG_ALLOWLIST.telegramWebhookSecret;
   return {
     version: "2.0",
     routeKey: "$default",
@@ -72,9 +79,13 @@ function textMessage(overrides?: {
   };
 }
 
-function handlerWithFetch(fetchFn: typeof fetch, seen = new Set<number>()) {
+function handlerWithFetch(
+  fetchFn: typeof fetch,
+  seen = new Set<number>(),
+  config: RelayConfig = CONFIG_ALLOWLIST,
+) {
   return createHandler({
-    getConfig: async () => CONFIG,
+    getConfig: async () => config,
     fetchFn,
     seenUpdateIds: seen,
   });
@@ -93,6 +104,21 @@ describe("telegram webhook relay", () => {
     const handler = handlerWithFetch(fetch);
     const result = await handler(telegramEvent(textMessage(), { secret: "wrong" }));
     expect(result.statusCode).toBe(401);
+  });
+
+  it("forwards any user when allow-all mode is enabled", async () => {
+    const calls: unknown[] = [];
+    const handler = handlerWithFetch(
+      async () => {
+        calls.push(1);
+        return new Response("ok", { status: 200 });
+      },
+      new Set(),
+      CONFIG_ALLOW_ALL,
+    );
+    const result = await handler(telegramEvent(textMessage({ userId: 9999, updateId: 77 })));
+    expect(result.statusCode).toBe(200);
+    expect(calls).toHaveLength(1);
   });
 
   it("drops a non-allowlisted user with 200 and does not forward", async () => {
@@ -123,8 +149,8 @@ describe("telegram webhook relay", () => {
     const result = await handler(telegramEvent(textMessage({ updateId: 99, userId: 1002, text: "Ping" })));
     expect(result.statusCode).toBe(200);
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe(CONFIG.webhookUrl);
-    expect(calls[0].headers.authorization).toBe(`Bearer ${CONFIG.webhookKey}`);
+    expect(calls[0].url).toBe(CONFIG_ALLOWLIST.webhookUrl);
+    expect(calls[0].headers.authorization).toBe(`Bearer ${CONFIG_ALLOWLIST.webhookKey}`);
     const payload = JSON.parse(calls[0].body) as {
       source: string;
       chat_id: number;

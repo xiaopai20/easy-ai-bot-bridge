@@ -21,7 +21,7 @@ Slack needs a `url_verification` challenge, answers within ~3s, cannot send Bear
 
 ### Telegram ([`telegram-webhook-relay`](relay/telegram-webhook-relay/))
 
-Telegram webhooks send `X-Telegram-Bot-Api-Secret-Token`, not Bearer auth, and wrap messages in `Update` objects. This relay maps that to your bot webhook and lets you **allowlist** which Telegram user ids may trigger the bot.
+Telegram webhooks send `X-Telegram-Bot-Api-Secret-Token`, not Bearer auth, and wrap messages in `Update` objects. This relay maps that to your bot webhook; optionally **allowlist** Telegram user ids (recommended for personal bots).
 
 ## Flow (Telegram example)
 
@@ -46,7 +46,7 @@ sequenceDiagram
 | Bridge | Path | Status |
 | --- | --- | --- |
 | **slack-webhook-relay** | [`relay/slack-webhook-relay/`](relay/slack-webhook-relay/) | Available. One Slack workspace, Lambda Function URL. |
-| **telegram-webhook-relay** | [`relay/telegram-webhook-relay/`](relay/telegram-webhook-relay/) | Available. One Telegram bot, allowlisted users, Lambda Function URL. |
+| **telegram-webhook-relay** | [`relay/telegram-webhook-relay/`](relay/telegram-webhook-relay/) | Available. One Telegram bot, optional user allowlist, Lambda Function URL. |
 | *(more planned)* | `relay/...` | Not yet. |
 
 ## Quick start
@@ -67,7 +67,7 @@ Configure secrets and platform webhooks per bridge README:
 ## Security
 
 - Relays hold **platform verification secrets** and **webhook bearer keys**, not the Slack/Telegram **bot tokens** used to post replies.
-- Restrict who can trigger the bot (Slack: workspace membership; Telegram: `ALLOWED_USER_IDS`).
+- Restrict who can trigger the bot (Slack: workspace membership; Telegram: `ALLOWED_USER_IDS` allowlist, recommended).
 - Use a dedicated bot without personal or sensitive data.
 - Do not commit secrets or production URLs.
 

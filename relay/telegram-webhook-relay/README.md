@@ -1,9 +1,9 @@
 # telegram-webhook-relay
 
 Minimal AWS Lambda that accepts Telegram Bot API webhook POSTs and forwards
-allowed users' messages to an AI bot routine webhook. One bot. Lambda Function
-URL only. Your bot replies via Telegram `sendMessage` (bot token stays in the AI
-bot, not here).
+human messages to an AI bot routine webhook. One bot. Lambda Function URL only.
+Your bot replies via Telegram `sendMessage` (bot token stays in the AI bot, not
+here).
 
 Cost at idle is about **$0.40/month** (one Secrets Manager secret). Lambda,
 Function URL, and logs are inside the free tier at low volume.
@@ -14,9 +14,15 @@ Function URL, and logs are inside the free tier at low volume.
   (the `secret_token` you set in `setWebhook`). This relay compares it with
   **constant-time** equality against `TELEGRAM_WEBHOOK_SECRET`. Wrong or missing
   header -> **401**, no forward.
-- Only Telegram user ids listed in `ALLOWED_USER_IDS` are forwarded. Everyone
-  else gets **200** with no forward so Telegram does not retry.
-- Bot senders and unsupported update types are ignored with **200**.
+- **User allowlist (recommended):** set `ALLOWED_USER_IDS` to a comma-separated
+  list of Telegram user ids. Only those senders are forwarded; others get **200**
+  with no forward. For a personal bot, always use an allowlist so strangers cannot
+  trigger your AI webhook.
+- **Allow all (default):** if `ALLOWED_USER_IDS` is unset, empty, or `*`, or you
+  set `ALLOW_ALL_USERS=true`, any human sender is forwarded. The Lambda logs a
+  **warning once per cold start** in this mode.
+- Bot senders and unsupported update types are always ignored with **200** (in
+  both modes).
 - `update_id` is deduped in memory per Lambda container so Telegram retries
   are not forwarded twice.
 - Logs at info level include `update_id`, `user_id`, and outcome only (not
@@ -32,10 +38,12 @@ directly).
 | --- | --- | --- |
 | Webhook secret + bearer key | Secrets Manager | `TELEGRAM_WEBHOOK_SECRET`, `WEBHOOK_KEY` |
 | Target webhook URL | Lambda env / CDK context `webhookUrl` | `WEBHOOK_URL` |
-| Allowlisted user ids | Lambda env / CDK context `allowedUserIds` | `ALLOWED_USER_IDS` (comma-separated) |
+| User allowlist (optional) | Lambda env / CDK `allowedUserIds` | `ALLOWED_USER_IDS` (comma-separated ids), or `*` / empty for allow-all |
+| Explicit allow-all | Lambda env / CDK `allowAllUsers` | `ALLOW_ALL_USERS=true` |
 
-Env vars override secrets for local tests: set all of `TELEGRAM_WEBHOOK_SECRET`,
-`WEBHOOK_KEY`, `WEBHOOK_URL`, and `ALLOWED_USER_IDS` and omit `SECRET_ARN`.
+Env vars override secrets for local tests: set `TELEGRAM_WEBHOOK_SECRET`,
+`WEBHOOK_KEY`, `WEBHOOK_URL`, and omit `SECRET_ARN`. `ALLOWED_USER_IDS` is
+optional (defaults to allow-all).
 
 ## Deploy
 

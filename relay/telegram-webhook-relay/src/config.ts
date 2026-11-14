@@ -4,13 +4,16 @@ export interface RelayConfig {
   telegramWebhookSecret: string;
   webhookUrl: string;
   webhookKey: string;
+  allowAllUsers: boolean;
   allowedUserIds: Set<number>;
 }
 
 let cached: RelayConfig | undefined;
+let allowAllWarned = false;
 
 export function resetConfigCache(): void {
   cached = undefined;
+  allowAllWarned = false;
 }
 
 function required(name: string, value: unknown): string {
@@ -20,11 +23,29 @@ function required(name: string, value: unknown): string {
   return value;
 }
 
-export function parseAllowedUserIds(raw: string | undefined): Set<number> {
-  const ids = new Set<number>();
-  if (!raw || raw === "REPLACE_ME") {
-    return ids;
+function isTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  const v = value.trim().toLowerCase();
+  return v === "true" || v === "1" || v === "yes";
+}
+
+export function resolveAllowlistFromEnv(env: NodeJS.ProcessEnv): {
+  allowAllUsers: boolean;
+  allowedUserIds: Set<number>;
+} {
+  if (isTruthyEnv(env.ALLOW_ALL_USERS)) {
+    return { allowAllUsers: true, allowedUserIds: new Set() };
   }
+
+  const raw = env.ALLOWED_USER_IDS?.trim();
+  if (!raw || raw === "REPLACE_ME") {
+    return { allowAllUsers: true, allowedUserIds: new Set() };
+  }
+  if (raw === "*") {
+    return { allowAllUsers: true, allowedUserIds: new Set() };
+  }
+
+  const ids = new Set<number>();
   for (const part of raw.split(",")) {
     const trimmed = part.trim();
     if (!trimmed) continue;
@@ -34,7 +55,24 @@ export function parseAllowedUserIds(raw: string | undefined): Set<number> {
     }
     ids.add(n);
   }
-  return ids;
+
+  if (ids.size === 0) {
+    return { allowAllUsers: true, allowedUserIds: new Set() };
+  }
+
+  return { allowAllUsers: false, allowedUserIds: ids };
+}
+
+export function warnIfAllowAllUsers(config: RelayConfig): void {
+  if (!config.allowAllUsers || allowAllWarned) return;
+  allowAllWarned = true;
+  console.warn(
+    JSON.stringify({
+      msg: "allow_all_users_enabled",
+      warning:
+        "ALLOWED_USER_IDS is unset, empty, *, or ALLOW_ALL_USERS is true; any human sender may trigger the bot",
+    }),
+  );
 }
 
 export function parseSecretFields(raw: string): { telegramWebhookSecret: string; webhookKey: string } {
@@ -61,11 +99,12 @@ export function configFromEnv(env: NodeJS.ProcessEnv = process.env): RelayConfig
   if (!telegramWebhookSecret && !webhookKey && !webhookUrl) {
     return null;
   }
+  const allowlist = resolveAllowlistFromEnv(env);
   return {
     telegramWebhookSecret: required("TELEGRAM_WEBHOOK_SECRET", telegramWebhookSecret),
     webhookUrl: required("WEBHOOK_URL", webhookUrl),
     webhookKey: required("WEBHOOK_KEY", webhookKey),
-    allowedUserIds: parseAllowedUserIds(env.ALLOWED_USER_IDS),
+    ...allowlist,
   };
 }
 
@@ -78,12 +117,13 @@ export async function loadConfig(args?: {
   const fromEnv = configFromEnv(env);
   if (fromEnv) {
     cached = fromEnv;
+    warnIfAllowAllUsers(cached);
     return cached;
   }
   const secretArn = env.SECRET_ARN;
   if (!secretArn) {
     throw new Error(
-      "Set SECRET_ARN or TELEGRAM_WEBHOOK_SECRET, WEBHOOK_KEY, and WEBHOOK_URL (plus ALLOWED_USER_IDS)",
+      "Set SECRET_ARN or TELEGRAM_WEBHOOK_SECRET, WEBHOOK_KEY, and WEBHOOK_URL (ALLOWED_USER_IDS optional)",
     );
   }
   const client = args?.client ?? new SecretsManagerClient({});
@@ -92,10 +132,12 @@ export async function loadConfig(args?: {
     throw new Error("SecretString is empty");
   }
   const secretFields = parseSecretFields(result.SecretString);
+  const allowlist = resolveAllowlistFromEnv(env);
   cached = {
     ...secretFields,
     webhookUrl: required("WEBHOOK_URL", env.WEBHOOK_URL),
-    allowedUserIds: parseAllowedUserIds(env.ALLOWED_USER_IDS),
+    ...allowlist,
   };
+  warnIfAllowAllUsers(cached);
   return cached;
 }
