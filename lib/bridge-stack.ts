@@ -29,6 +29,8 @@ export class BridgeStack extends cdk.Stack {
       this.node.tryGetContext("callbackUrl") ?? process.env.CALLBACK_URL ?? "http://localhost:3002";
     const corsOrigin =
       this.node.tryGetContext("corsOrigin") ?? process.env.CORS_ORIGIN ?? callbackUrl;
+    const adminEmails =
+      this.node.tryGetContext("adminEmails") ?? process.env.ADMIN_EMAILS ?? "";
 
     const tenantKey = new kms.Key(this, "TenantSecretKey", {
       description: "Encrypts per-tenant bot webhook keys and Slack bot tokens",
@@ -53,6 +55,10 @@ export class BridgeStack extends cdk.Stack {
       sortKey: { name: "sk", type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY,
+    });
+    routesTable.addGlobalSecondaryIndex({
+      indexName: "byTenant",
+      partitionKey: { name: "tenantId", type: dynamodb.AttributeType.STRING },
     });
     const directoryTable = new dynamodb.Table(this, "Directory", {
       partitionKey: { name: "pk", type: dynamodb.AttributeType.STRING },
@@ -158,6 +164,14 @@ export class BridgeStack extends cdk.Stack {
       TENANT_KMS_KEY_ID: tenantKey.keyId,
       CORS_ORIGIN: String(corsOrigin),
       DASHBOARD_URL: String(callbackUrl),
+      ADMIN_EMAILS: String(adminEmails),
+      SETTINGS_CACHE_TTL_SECONDS: "60",
+      MAX_BOTS: "5",
+      MAX_CHANNELS: "5",
+      MAX_ROUTES: "20",
+      MESSAGES_PER_MINUTE: "120",
+      MESSAGES_PER_DAY: "10000",
+      LOOP_MESSAGES_PER_THREAD_PER_MINUTE: "20",
     };
 
     const bundling: lambdaNodejs.BundlingOptions = {
@@ -275,6 +289,13 @@ export class BridgeStack extends cdk.Stack {
         allowHeaders: ["content-type", "authorization"],
       },
     });
+    const defaultStage = api.defaultStage?.node.defaultChild as apigwv2.CfnStage | undefined;
+    if (defaultStage) {
+      defaultStage.defaultRouteSettings = {
+        throttlingBurstLimit: 100,
+        throttlingRateLimit: 50,
+      };
+    }
 
     const jwtAuthorizer = new HttpUserPoolAuthorizer("CognitoAuthorizer", userPool, {
       userPoolClients: [userPoolClient],

@@ -10,6 +10,7 @@ import {
   rawBody,
 } from "../lib/http";
 import { newId } from "../lib/keys";
+import { consumeOutboundQuota } from "../lib/rate-limit";
 import { verifyReplyToken } from "../lib/reply-token";
 import { createRuntimeContext } from "../runtime";
 
@@ -62,6 +63,16 @@ async function reply(ctx: AppContext, event: APIGatewayProxyEventV2): Promise<AP
   const mapping = await ctx.stores.getThread(claims.tenantId, threadId);
   if (!mapping || mapping.tenantId !== claims.tenantId) {
     throw new HttpError(404, "Unknown thread");
+  }
+
+  const quota = await consumeOutboundQuota(ctx, claims.tenantId, mapping);
+  if (!quota.ok) {
+    throw new HttpError(
+      429,
+      quota.reason === "loop_detected"
+        ? "Loop protection: too many messages in this thread"
+        : "Rate limit exceeded",
+    );
   }
 
   if (mapping.platform === "widget") {

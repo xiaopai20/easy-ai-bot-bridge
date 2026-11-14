@@ -6,6 +6,7 @@ import {
   ResourceNotFoundException,
   SecretsManagerClient,
 } from "@aws-sdk/client-secrets-manager";
+import type { TtlCache } from "./cache";
 import type { TenantSecrets } from "./stores";
 
 export class MemoryTenantSecrets implements TenantSecrets {
@@ -29,6 +30,41 @@ export class MemoryTenantSecrets implements TenantSecrets {
   }
   async deleteSlackToken(tenantId: string, teamId: string): Promise<void> {
     this.slack.delete(`${tenantId}#${teamId}`);
+  }
+}
+
+export class CachingTenantSecrets implements TenantSecrets {
+  constructor(
+    private readonly inner: TenantSecrets,
+    private readonly cache: TtlCache,
+    private readonly now: () => number,
+  ) {}
+
+  async putBotKey(tenantId: string, botId: string, key: string): Promise<void> {
+    await this.inner.putBotKey(tenantId, botId, key);
+    this.cache.invalidate(`secret:bot:${tenantId}:${botId}`);
+  }
+  async getBotKey(tenantId: string, botId: string): Promise<string | null> {
+    return this.cache.getOrLoad(`secret:bot:${tenantId}:${botId}`, this.now(), () =>
+      this.inner.getBotKey(tenantId, botId),
+    );
+  }
+  async deleteBotKey(tenantId: string, botId: string): Promise<void> {
+    await this.inner.deleteBotKey(tenantId, botId);
+    this.cache.invalidate(`secret:bot:${tenantId}:${botId}`);
+  }
+  async putSlackToken(tenantId: string, teamId: string, token: string): Promise<void> {
+    await this.inner.putSlackToken(tenantId, teamId, token);
+    this.cache.invalidate(`secret:slack:${tenantId}:${teamId}`);
+  }
+  async getSlackToken(tenantId: string, teamId: string): Promise<string | null> {
+    return this.cache.getOrLoad(`secret:slack:${tenantId}:${teamId}`, this.now(), () =>
+      this.inner.getSlackToken(tenantId, teamId),
+    );
+  }
+  async deleteSlackToken(tenantId: string, teamId: string): Promise<void> {
+    await this.inner.deleteSlackToken(tenantId, teamId);
+    this.cache.invalidate(`secret:slack:${tenantId}:${teamId}`);
   }
 }
 

@@ -5,12 +5,13 @@ import { BrandMark } from "./BrandMark";
 
 interface AppHeaderProps {
   user?: { name: string } | null;
+  isAdmin?: boolean;
   onLogin?: () => void;
   onLogout?: () => void;
   loggingIn?: boolean;
 }
 
-export function AppHeader({ user, onLogin, onLogout, loggingIn }: AppHeaderProps) {
+export function AppHeader({ user, isAdmin, onLogin, onLogout, loggingIn }: AppHeaderProps) {
   return (
     <header className="border-b border-stone-200/80 bg-white/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -33,6 +34,11 @@ export function AppHeader({ user, onLogin, onLogout, loggingIn }: AppHeaderProps
                 <Link href="/app" className="text-sm font-medium text-stone-700 hover:text-stone-900">
                   Dashboard
                 </Link>
+                {isAdmin && (
+                  <Link href="/admin" className="text-sm font-medium text-stone-700 hover:text-stone-900">
+                    Admin
+                  </Link>
+                )}
                 <button
                   onClick={onLogout}
                   className="text-sm text-stone-600 hover:text-stone-900 px-4 py-2 rounded-lg hover:bg-stone-100 transition-all duration-200 font-medium border border-stone-200 hover:border-stone-300"

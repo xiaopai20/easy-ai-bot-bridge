@@ -1,3 +1,4 @@
+import type { TtlCache } from "./lib/cache";
 import type { Actor, BridgeSecrets, RuntimeConfig } from "./lib/types";
 import type { EnqueueFn, Stores, TenantSecrets } from "./lib/stores";
 
@@ -8,6 +9,7 @@ export interface AppContext {
   getSecrets: () => Promise<BridgeSecrets>;
   fetch: typeof fetch;
   now: () => number;
+  cache: TtlCache;
   config: Pick<
     RuntimeConfig,
     | "replyUrl"
@@ -17,6 +19,9 @@ export interface AppContext {
     | "slackBotUserId"
     | "eventTtlSeconds"
     | "threadTtlSeconds"
+    | "defaultLimits"
+    | "adminEmails"
+    | "settingsCacheTtlSeconds"
   >;
 }
 

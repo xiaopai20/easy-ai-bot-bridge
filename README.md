@@ -64,7 +64,7 @@ sequenceDiagram
 | Piece | Role |
 | --- | --- |
 | Cognito + Google | Only login. No password users. |
-| Next.js dashboard (`apps/web`) | Connect bots and channels, Add to Slack, copy widget snippet |
+| Next.js dashboard (`apps/web`) | Connect bots and channels, Add to Slack, copy widget snippet, usage, admin overrides |
 | API Gateway HTTP API | Public: `/slack/events`, `/slack/oauth/callback`, `/reply`, `/widget/*`. JWT on `/api/{proxy+}` |
 | Ingest Lambda | Slack sig + timestamp, map `team_id` to tenant, ignore bot/self, dedupe `event_id`, enqueue, ack under 3s |
 | Widget Lambda | Public token lookup, enqueue, inbox poll, `/widget.js` |
@@ -100,6 +100,91 @@ Within a tenant, any channel can link to any bot. Across tenants:
 - A widget token for A cannot read B's inbox
 
 See `test/isolation.test.ts`.
+
+## Quotas and rate limits
+
+Every tenant starts with the same defaults (override with Lambda env or CDK context):
+
+| Limit | Default |
+| --- | --- |
+| `maxBots` | 5 |
+| `maxChannels` | 5 |
+| `maxRoutes` | 20 |
+| `messagesPerMinute` | 120 |
+| `messagesPerDay` | 10_000 (UTC day) |
+| `loopMessagesPerThreadPerMinute` | 20 |
+
+Create bot/channel/route returns HTTP 400 when the cap is reached. Message caps are
+enforced on ingest and `/reply`: over-limit inbound messages are not forwarded (Slack
+still gets HTTP 200 so it does not retry). The tenant gets **one** Slack/widget notice
+per minute. `/reply` returns **429**. Two bots ping-ponging in the same thread are
+stopped when that thread exceeds `loopMessagesPerThreadPerMinute` in a UTC minute;
+the bridge logs `loop_detected` and does not forward.
+
+Per-tenant overrides live on the directory table (`pk=TENANT#{id}`, `sk=LIMITS`) and
+are merged onto the defaults. Set them from the dashboard **Admin** page (allowlisted
+Google emails) or:
+
+```bash
+# Allowlist (comma-separated, case-insensitive). Empty means nobody is admin.
+npx cdk deploy -c adminEmails="you@example.com,ops@example.com"
+
+# Or patch after deploy:
+# PATCH /api/admin/tenants/{tenantId}/limits
+# Authorization: Bearer <Cognito JWT of an allowlisted email>
+# { "messagesPerMinute": 30, "maxBots": 8 }
+```
+
+`ADMIN_EMAILS` is also read from the Lambda environment. Defaults can be changed with
+`MAX_BOTS`, `MAX_CHANNELS`, `MAX_ROUTES`, `MESSAGES_PER_MINUTE`, `MESSAGES_PER_DAY`,
+`LOOP_MESSAGES_PER_THREAD_PER_MINUTE`.
+
+API Gateway HTTP API default-stage throttle is 50 requests/second, burst 100.
+
+### Settings cache
+
+Routes, Slack team mappings, widget tokens, channels, limits, and tenant secrets are
+cached in memory on each Lambda container (`TtlCache`, default 60s,
+`SETTINGS_CACHE_TTL_SECONDS`). There is no Redis and no cross-container invalidation.
+Dashboard writes bump `configVersion` and drop matching keys **in that container**.
+Other containers may see the previous value until TTL. **When the cache is warm, the
+hot path does not read DynamoDB for settings.**
+
+### DynamoDB operations per forwarded message
+
+The hot path never uses `TransactWrite`. Minute and day counters share **one**
+`UpdateItem` on a per-tenant UTC-day item (`pk=rate#{tenantId}#d#{yyyy-mm-dd}`) that
+holds `dayCount`, `minuteBucket`, and `minuteCount`. Loop protection piggybacks on the
+thread mapping write (`loopMinute` / `loopCount`). Dedupe is a separate conditional
+`Put` because it keys on `event_id`, not the tenant.
+
+**Inbound Slack/widget message that is forwarded (cache warm):**
+
+| # | Table | Op | Item | Why |
+| --- | --- | --- | --- | --- |
+| 1 | `events` | `Put` (condition `attribute_not_exists`) | `event#{tenant}#{platform}#{eventId}` | Durable dedupe |
+| 2 | `events` | `Update` | `rate#{tenant}#d#{day}` | Minute + day quota together |
+| 3 | `threads` | `Update` | `thread#{tenant}#{threadId}` | Mapping + loop counter |
+
+Zero DynamoDB **reads** for route / Slack team / widget token / channel / limits.
+
+**Bot `/reply` that is posted (cache warm):**
+
+| # | Table | Op | Item | Why |
+| --- | --- | --- | --- | --- |
+| 1 | `threads` | `Get` | thread mapping | Need channel / `thread_ts` |
+| 2 | `events` | `Update` | day quota item | Same combined counter |
+| 3 | `threads` | `Update` | thread mapping | Loop counter on the existing row |
+
+A fourth write (`Put` of a notice flag on `events`) happens only when the tenant is
+over limit, and at most once per minute. Widget transcripts add inbox `Put`s on that
+path only.
+
+Three writes per inbound message is the minimum that still keeps durable per-event
+dedupe (different key) and a thread mapping (different table). Combining minute/day
+into one item avoids a second counter write; putting the loop counter on the thread
+item avoids a third counter write. A `TransactWrite` of those items would cost more
+WCUs for the same durability.
 
 ## Adapter interface
 
@@ -179,7 +264,8 @@ or cross-tenant token; 404 means the thread mapping is gone.
 - Landing: **Continue with Google** only
 - `/auth/callback`: Amplify finishes the Cognito code grant, then redirects to `/app`
 - `/app`: first `GET /api/me` creates the tenant; then CRUD bots, website widgets,
-  Telegram stubs, **Add to Slack**, embed snippet, link any channel to any bot
+  Telegram stubs, **Add to Slack**, embed snippet, link any channel to any bot, usage
+- `/admin`: allowlisted Google emails set per-tenant limit overrides
 
 Local:
 
@@ -250,7 +336,8 @@ npx cdk deploy \
   -c googleClientId="$GOOGLE_CLIENT_ID" \
   -c googleClientSecret="$GOOGLE_CLIENT_SECRET" \
   -c callbackUrl=https://your-dashboard.example \
-  -c corsOrigin=https://your-dashboard.example
+  -c corsOrigin=https://your-dashboard.example \
+  -c adminEmails="you@example.com"
 ```
 
 Without Google context, CDK still synths (Cognito placeholder client) but production
@@ -342,6 +429,9 @@ Covered without AWS, Slack, or Google:
 - Slack OAuth callback stores a per-tenant bot token
 - Widget round trip: visitor -> bot webhook -> inbox
 - Isolation: bots, channels, routes, reply tokens, widget inbox, webhook keys
+- Quotas: default merge, create caps, admin allowlist, per-tenant override
+- Rate limit: no forward over cap, one notice per minute, `/reply` 429, loop protection
+- Settings cache: warm-cache skips DynamoDB reads; TTL expiry; same-container invalidate
 - Mocked path: Slack `app_mention` -> forwarded JSON -> `/reply` -> `chat.postMessage`
   (including a non-ASCII UTF-8 round trip using escaped Unicode)
 

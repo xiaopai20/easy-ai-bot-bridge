@@ -1,6 +1,7 @@
-import { composeThreadId } from "./keys";
-import { lookupRoute } from "./routing";
 import type { AppContext } from "../context";
+import { composeThreadId } from "./keys";
+import { consumeInboundQuota, maybeNotifyRateLimited } from "./rate-limit";
+import { lookupRouteCached } from "./settings";
 import type { NormalizedMessage } from "./types";
 
 export async function enqueueInbound(
@@ -15,7 +16,7 @@ export async function enqueueInbound(
       : composeThreadId(tenantId, message.threadId),
   };
 
-  const route = await lookupRoute(ctx.stores, {
+  const route = await lookupRouteCached(ctx, {
     tenantId,
     platform: scoped.platform,
     workspaceId: scoped.conversation.workspaceId,
@@ -48,7 +49,7 @@ export async function enqueueInbound(
   }
 
   try {
-    await ctx.stores.putThread({
+    const quota = await consumeInboundQuota(ctx, tenantId, {
       tenantId,
       threadId: scoped.threadId,
       platform: scoped.platform,
@@ -59,6 +60,13 @@ export async function enqueueInbound(
       createdAt: new Date(ctx.now()).toISOString(),
       expiresAt: Math.floor(ctx.now() / 1000) + ctx.config.threadTtlSeconds,
     });
+    if (!quota.ok) {
+      if (quota.reason === "rate_limited") {
+        await maybeNotifyRateLimited(ctx, tenantId, scoped);
+      }
+      return { ok: true, ignored: true, reason: quota.reason === "loop_detected" ? "loop detected" : "rate limited" };
+    }
+
     await ctx.enqueue({
       tenantId,
       botId: route.targetId,

@@ -3,6 +3,7 @@ import { getAdapter } from "../adapters/registry";
 import type { AppContext } from "../context";
 import { handleError, json, parseJsonBody, rawBody, text } from "../lib/http";
 import { enqueueInbound } from "../lib/pipeline";
+import { getSlackTeamMappingCached } from "../lib/settings";
 import { createRuntimeContext } from "../runtime";
 
 export function createIngestHandler(ctx: AppContext, platform = "slack") {
@@ -42,7 +43,7 @@ async function ingest(
   }
 
   const workspaceId = parsedPreview.message.conversation.workspaceId;
-  const mapping = await ctx.stores.getSlackTeamMapping(workspaceId);
+  const mapping = await getSlackTeamMappingCached(ctx, workspaceId);
   if (!mapping) {
     console.log(JSON.stringify({ msg: "ingest_no_tenant", platform, workspaceId }));
     return json(200, { ok: true, ignored: true, reason: "no tenant mapping" });

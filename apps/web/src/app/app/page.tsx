@@ -35,6 +35,19 @@ function DashboardInner() {
   const [user, setUser] = useState<User | null>(null);
   const [loginOpen, setLoginOpen] = useState(false);
   const [tenant, setTenant] = useState<Tenant | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [usage, setUsage] = useState<{
+    limits: {
+      maxBots: number;
+      maxChannels: number;
+      maxRoutes: number;
+      messagesPerMinute: number;
+      messagesPerDay: number;
+      loopMessagesPerThreadPerMinute: number;
+    };
+    usage: { bots: number; channels: number; routes: number };
+    messages: { dayCount: number; minuteCount: number };
+  } | null>(null);
   const [bots, setBots] = useState<Bot[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +64,8 @@ function DashboardInner() {
   const refresh = useCallback(async () => {
     const me = await getMe();
     setTenant(me.tenant);
+    setIsAdmin(Boolean(me.isAdmin));
+    setUsage({ limits: me.limits, usage: me.usage, messages: me.messages });
     const [botRes, channelRes] = await Promise.all([listBots(), listChannels()]);
     setBots(botRes.bots);
     setChannels(channelRes.channels);
@@ -156,7 +171,7 @@ function DashboardInner() {
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900">
-      <AppHeader user={user} onLogout={() => void logout()} />
+      <AppHeader user={user} isAdmin={isAdmin} onLogout={() => void logout()} />
       <main className="max-w-6xl mx-auto px-4 py-8 space-y-8">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
@@ -170,6 +185,51 @@ function DashboardInner() {
         )}
         {notice && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{notice}</div>
+        )}
+
+        {usage && (
+          <section className="rounded-2xl border border-stone-200 bg-white shadow-sm p-6">
+            <h2 className="text-lg font-semibold">Usage</h2>
+            <p className="mt-1 text-sm text-stone-600">
+              Per-tenant quotas. An admin can raise them for this workspace.
+            </p>
+            <dl className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Bots</dt>
+                <dd className="font-medium">
+                  {usage.usage.bots} / {usage.limits.maxBots}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Channels</dt>
+                <dd className="font-medium">
+                  {usage.usage.channels} / {usage.limits.maxChannels}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Routes</dt>
+                <dd className="font-medium">
+                  {usage.usage.routes} / {usage.limits.maxRoutes}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Messages this minute</dt>
+                <dd className="font-medium">
+                  {usage.messages.minuteCount} / {usage.limits.messagesPerMinute}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Messages today (UTC)</dt>
+                <dd className="font-medium">
+                  {usage.messages.dayCount} / {usage.limits.messagesPerDay}
+                </dd>
+              </div>
+              <div className="rounded-lg bg-stone-50 p-3">
+                <dt className="text-stone-500">Loop cap / thread / minute</dt>
+                <dd className="font-medium">{usage.limits.loopMessagesPerThreadPerMinute}</dd>
+              </div>
+            </dl>
+          </section>
         )}
 
         <section className="rounded-2xl border border-stone-200 bg-white shadow-sm p-6 space-y-4">

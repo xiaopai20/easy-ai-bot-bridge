@@ -22,6 +22,10 @@ export function tenantMetaSk(): string {
   return "META";
 }
 
+export function limitsSk(): string {
+  return "LIMITS";
+}
+
 export function botSk(botId: string): string {
   return `BOT#${botId}`;
 }
@@ -57,6 +61,25 @@ export function inboxPk(tenantId: string, threadId: string): string {
 export function composeThreadId(tenantId: string, platformThreadId: string): string {
   return `${tenantId}:${platformThreadId}`;
 }
+
+export function minuteBucket(nowMs: number): number {
+  return Math.floor(nowMs / 60_000);
+}
+
+export function utcDayKey(nowMs: number): string {
+  return new Date(nowMs).toISOString().slice(0, 10);
+}
+
+export function rateDayPk(tenantId: string, day: string): string {
+  return `rate#${tenantId}#d#${day}`;
+}
+
+export function rateNoticePk(tenantId: string, minute: number): string {
+  return `rate#${tenantId}#n#${minute}`;
+}
+
+export const RATE_MINUTE_TTL_SECONDS = 120;
+export const RATE_DAY_TTL_SECONDS = 2 * 24 * 60 * 60;
 
 export function newId(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;

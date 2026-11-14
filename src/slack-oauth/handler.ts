@@ -2,8 +2,10 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from "
 import type { AppContext } from "../context";
 import { handleError, HttpError, queryParam } from "../lib/http";
 import { newId } from "../lib/keys";
+import { assertCanCreateChannel } from "../lib/limits";
 import { verifyOAuthState } from "../lib/oauth-state";
-import { writeChannelRoute } from "../lib/tenancy";
+import { invalidateSlackTeamCache } from "../lib/settings";
+import { publishChannelRoute } from "../lib/tenancy";
 import { createRuntimeContext } from "../runtime";
 
 export function createSlackOAuthHandler(ctx: AppContext) {
@@ -73,6 +75,9 @@ async function completeInstall(
     throw new HttpError(400, "Create a bot before connecting Slack");
   }
   const bot = bots[0];
+  if (!existing?.channelId) {
+    await assertCanCreateChannel(ctx, claims.tenantId);
+  }
   const channelId = existing?.channelId ?? newId("ch");
   const channel = {
     tenantId: claims.tenantId,
@@ -101,7 +106,8 @@ async function completeInstall(
     throw err;
   }
   await ctx.tenantSecrets.putSlackToken(claims.tenantId, payload.team.id, payload.access_token);
-  await writeChannelRoute(ctx.stores, channel, bot);
+  invalidateSlackTeamCache(ctx, payload.team.id);
+  await publishChannelRoute(ctx, channel, bot);
 
   const location = `${dashboard}/app?slack=connected`;
   return {

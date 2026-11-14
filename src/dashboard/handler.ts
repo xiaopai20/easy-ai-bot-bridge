@@ -3,15 +3,28 @@ import type { AppContext } from "../context";
 import { handleError, HttpError, json, parseJsonBody, pathParts, rawBody } from "../lib/http";
 import { actorFromApiEvent } from "../lib/identity";
 import { newId } from "../lib/keys";
+import {
+  assertCanCreateBot,
+  assertCanCreateChannel,
+  bumpTenantConfig,
+  getEffectiveLimits,
+  getLimitsSnapshot,
+  isAdminEmail,
+  LIMIT_FIELDS,
+  parseLimitsOverride,
+  usageCounts,
+} from "../lib/limits";
 import { issueOAuthState } from "../lib/oauth-state";
+import { invalidateSlackTeamCache, invalidateWidgetTokenCache } from "../lib/settings";
 import {
   ensureTenantForUser,
+  publishChannelRoute,
   requireOwnedBot,
   requireOwnedChannel,
-  writeChannelRoute,
   removeChannelSideEffects,
+  writeChannelRoute,
 } from "../lib/tenancy";
-import type { ChannelPlatform } from "../lib/types";
+import type { ChannelPlatform, TenantLimitsOverride } from "../lib/types";
 import { createRuntimeContext } from "../runtime";
 
 export function createDashboardHandler(ctx: AppContext) {
@@ -23,14 +36,52 @@ export function createDashboardHandler(ctx: AppContext) {
         return json(204, {}, origin);
       }
       const actor = actorFromApiEvent(event);
-      const tenant = await ensureTenantForUser(ctx.stores, actor, ctx.now());
       const parts = pathParts(event);
-      // /api/...
       const apiIndex = parts.indexOf("api");
       const segs = apiIndex >= 0 ? parts.slice(apiIndex + 1) : parts;
 
+      if (segs[0] === "admin") {
+        return await handleAdmin(ctx, method, segs, actor, event, origin);
+      }
+
+      const tenant = await ensureTenantForUser(ctx.stores, actor, ctx.now());
+
       if (method === "GET" && segs.length === 1 && segs[0] === "me") {
-        return json(200, { user: actor, tenant }, origin);
+        const [snapshot, usage, messages] = await Promise.all([
+          getLimitsSnapshot(ctx, tenant.tenantId),
+          usageCounts(ctx, tenant.tenantId),
+          ctx.stores.getMessageQuotaUsage(tenant.tenantId, ctx.now()),
+        ]);
+        return json(
+          200,
+          {
+            user: actor,
+            tenant,
+            isAdmin: isAdminEmail(actor.email, ctx.config.adminEmails),
+            limits: snapshot.limits,
+            usage,
+            messages: { dayCount: messages.dayCount, minuteCount: messages.minuteCount },
+          },
+          origin,
+        );
+      }
+
+      if (method === "GET" && segs[0] === "usage") {
+        const [snapshot, usage, messages] = await Promise.all([
+          getLimitsSnapshot(ctx, tenant.tenantId),
+          usageCounts(ctx, tenant.tenantId),
+          ctx.stores.getMessageQuotaUsage(tenant.tenantId, ctx.now()),
+        ]);
+        return json(
+          200,
+          {
+            limits: snapshot.limits,
+            override: snapshot.override,
+            usage,
+            messages: { dayCount: messages.dayCount, minuteCount: messages.minuteCount },
+          },
+          origin,
+        );
       }
 
       if (segs[0] === "bots") {
@@ -67,6 +118,77 @@ export function createDashboardHandler(ctx: AppContext) {
   };
 }
 
+async function handleAdmin(
+  ctx: AppContext,
+  method: string,
+  segs: string[],
+  actor: { userId: string; email: string; name: string },
+  event: APIGatewayProxyEventV2,
+  origin: string,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  if (!isAdminEmail(actor.email, ctx.config.adminEmails)) {
+    throw new HttpError(403, "Admin only");
+  }
+  // /api/admin/tenants/:tenantId[/limits]
+  if (segs[1] !== "tenants" || !segs[2]) {
+    throw new HttpError(404, "Not found");
+  }
+  const tenantId = segs[2];
+  const tenant = await ctx.stores.getTenant(tenantId);
+  if (!tenant) {
+    throw new HttpError(404, "Tenant not found");
+  }
+
+  if (method === "GET" && segs.length === 3) {
+    const [snapshot, usage, messages] = await Promise.all([
+      getLimitsSnapshot(ctx, tenantId),
+      usageCounts(ctx, tenantId),
+      ctx.stores.getMessageQuotaUsage(tenantId, ctx.now()),
+    ]);
+    return json(
+      200,
+      {
+        tenant,
+        limits: snapshot.limits,
+        override: snapshot.override,
+        configVersion: snapshot.configVersion,
+        usage,
+        messages: { dayCount: messages.dayCount, minuteCount: messages.minuteCount },
+      },
+      origin,
+    );
+  }
+
+  if (method === "PATCH" && segs[3] === "limits") {
+    const body = asObject(parseJsonBody(rawBody(event)));
+    const existing = await ctx.stores.getLimitsRecord(tenantId);
+    let override: TenantLimitsOverride = { ...(existing?.override ?? {}) };
+    if (body.reset === true) {
+      override = {};
+    } else {
+      const parsed = parseLimitsOverride(body);
+      override = { ...override, ...parsed };
+      for (const field of LIMIT_FIELDS) {
+        if (body[field] === null) {
+          delete override[field];
+        }
+      }
+    }
+    const record = {
+      tenantId,
+      configVersion: (existing?.configVersion ?? 0) + 1,
+      override,
+      updatedAt: new Date(ctx.now()).toISOString(),
+    };
+    await ctx.stores.putLimitsRecord(record);
+    ctx.cache.invalidate(`limits:${tenantId}`);
+    const limits = await getEffectiveLimits(ctx, tenantId);
+    return json(200, { tenant, limits, override: record.override, configVersion: record.configVersion }, origin);
+  }
+
+  throw new HttpError(404, "Not found");
+}
+
 async function handleBots(
   ctx: AppContext,
   method: string,
@@ -87,6 +209,7 @@ async function handleBots(
     if (!name || !webhookUrl || !webhookKey) {
       throw new HttpError(400, "name, webhookUrl, and webhookKey are required");
     }
+    await assertCanCreateBot(ctx, tenantId);
     const bot = {
       tenantId,
       botId: newId("bot"),
@@ -121,6 +244,7 @@ async function handleBots(
           await writeChannelRoute(ctx.stores, channel, next);
         }
       }
+      await bumpTenantConfig(ctx, tenantId);
       return json(200, { bot: next }, origin);
     }
     if (method === "DELETE") {
@@ -157,6 +281,7 @@ async function handleChannels(
       throw new HttpError(400, "name, botId, and platform (widget|telegram) are required");
     }
     const bot = await requireOwnedBot(ctx.stores, tenantId, botId);
+    await assertCanCreateChannel(ctx, tenantId);
     const channelId = newId("ch");
     const widgetToken = platform === "widget" ? newId("wgt") : undefined;
     const channel = {
@@ -173,7 +298,7 @@ async function handleChannels(
     if (widgetToken) {
       await ctx.stores.putWidgetTokenMapping({ token: widgetToken, tenantId, channelId });
     }
-    await writeChannelRoute(ctx.stores, channel, bot);
+    await publishChannelRoute(ctx, channel, bot);
     return json(201, { channel }, origin);
   }
   if (segs.length >= 2) {
@@ -196,12 +321,19 @@ async function handleChannels(
       const bot = await requireOwnedBot(ctx.stores, tenantId, botId);
       const next = { ...channel, botId };
       await ctx.stores.putChannel(next);
-      await writeChannelRoute(ctx.stores, next, bot);
+      await publishChannelRoute(ctx, next, bot);
       return json(200, { channel: next }, origin);
     }
     if (method === "DELETE" && segs.length === 2) {
+      if (channel.platform === "slack" && channel.slackTeamId) {
+        invalidateSlackTeamCache(ctx, channel.slackTeamId);
+      }
+      if (channel.widgetToken) {
+        invalidateWidgetTokenCache(ctx, channel.widgetToken);
+      }
       await removeChannelSideEffects(ctx.stores, ctx.tenantSecrets, channel);
       await ctx.stores.deleteChannel(tenantId, channel.channelId);
+      await bumpTenantConfig(ctx, tenantId);
       return json(200, { ok: true }, origin);
     }
   }

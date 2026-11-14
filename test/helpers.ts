@@ -1,18 +1,23 @@
 import type { APIGatewayProxyEventV2 } from "aws-lambda";
 import type { AppContext } from "../src/context";
+import { TtlCache } from "../src/lib/cache";
 import {
   botSk,
   channelSk,
   eventPk,
   inboxPk,
+  minuteBucket,
+  rateDayPk,
   routePk,
   routeSk,
   slackTeamPk,
   tenantPk,
   threadPk,
   userPk,
+  utcDayKey,
   widgetTokenPk,
 } from "../src/lib/keys";
+import { DEFAULT_LIMITS } from "../src/lib/limits";
 import type { EnqueueFn, Stores } from "../src/lib/stores";
 import { MemoryTenantSecrets } from "../src/lib/tenant-secrets";
 import type {
@@ -23,6 +28,8 @@ import type {
   InboxMessage,
   RouteRecord,
   SlackTeamMapping,
+  TenantLimits,
+  TenantLimitsRecord,
   TenantRecord,
   ThreadRecord,
   WidgetTokenMapping,
@@ -56,6 +63,12 @@ export class MemoryStores implements Stores {
   slackTeams = new Map<string, SlackTeamMapping>();
   widgets = new Map<string, WidgetTokenMapping>();
   inbox = new Map<string, InboxMessage[]>();
+  limits = new Map<string, TenantLimitsRecord>();
+  quota = new Map<string, { dayCount: number; minuteBucket: number; minuteCount: number }>();
+  loops = new Map<string, { minute: number; count: number }>();
+  flags = new Map<string, true>();
+  reads = { routes: 0, slackTeams: 0, widgets: 0, channels: 0, limits: 0 };
+  writes = { events: 0, quota: 0, threads: 0, flags: 0 };
 
   seedRoute(route: RouteRecord): void {
     this.routes.set(
@@ -77,6 +90,7 @@ export class MemoryStores implements Stores {
     nowMs: number,
   ): Promise<boolean> {
     const pk = eventPk(tenantId, platform, eventId);
+    this.writes.events += 1;
     if (this.events.has(pk)) return false;
     this.events.set(pk, { expiresAt: Math.floor(nowMs / 1000) + ttlSeconds });
     return true;
@@ -92,6 +106,7 @@ export class MemoryStores implements Stores {
     workspaceId: string,
     channelId: string,
   ): Promise<RouteRecord | null> {
+    this.reads.routes += 1;
     return (
       this.routes.get(`${routePk(tenantId, platform, workspaceId)}|${routeSk(channelId)}`) ?? null
     );
@@ -111,7 +126,32 @@ export class MemoryStores implements Stores {
   }
 
   async putThread(record: ThreadRecord): Promise<void> {
+    this.writes.threads += 1;
     this.threads.set(threadPk(record.tenantId, record.threadId), record);
+  }
+
+  async upsertThreadAndConsumeLoop(
+    record: ThreadRecord,
+    loopLimit: number,
+    nowMs: number,
+  ): Promise<boolean> {
+    this.writes.threads += 1;
+    const pk = threadPk(record.tenantId, record.threadId);
+    const minute = minuteBucket(nowMs);
+    const existing = this.threads.get(pk);
+    const loop = this.loops.get(pk) ?? { minute, count: 0 };
+    if (loop.minute !== minute) {
+      loop.minute = minute;
+      loop.count = 0;
+    }
+    if (loop.count >= loopLimit) return false;
+    loop.count += 1;
+    this.loops.set(pk, loop);
+    this.threads.set(pk, {
+      ...record,
+      createdAt: existing?.createdAt ?? record.createdAt,
+    });
+    return true;
   }
 
   async getThread(tenantId: string, threadId: string): Promise<ThreadRecord | null> {
@@ -151,6 +191,7 @@ export class MemoryStores implements Stores {
     this.channels.set(`${record.tenantId}|${channelSk(record.channelId)}`, record);
   }
   async getChannel(tenantId: string, channelId: string): Promise<ChannelRecord | null> {
+    this.reads.channels += 1;
     const channel = this.channels.get(`${tenantId}|${channelSk(channelId)}`);
     return channel && channel.tenantId === tenantId ? channel : null;
   }
@@ -162,6 +203,7 @@ export class MemoryStores implements Stores {
   }
 
   async getSlackTeamMapping(teamId: string): Promise<SlackTeamMapping | null> {
+    this.reads.slackTeams += 1;
     return this.slackTeams.get(slackTeamPk(teamId)) ?? null;
   }
   async putSlackTeamMapping(mapping: SlackTeamMapping): Promise<void> {
@@ -178,6 +220,7 @@ export class MemoryStores implements Stores {
   }
 
   async getWidgetTokenMapping(token: string): Promise<WidgetTokenMapping | null> {
+    this.reads.widgets += 1;
     return this.widgets.get(widgetTokenPk(token)) ?? null;
   }
   async putWidgetTokenMapping(mapping: WidgetTokenMapping): Promise<void> {
@@ -195,6 +238,80 @@ export class MemoryStores implements Stores {
   }
   async listInboxMessages(tenantId: string, threadId: string): Promise<InboxMessage[]> {
     return (this.inbox.get(inboxPk(tenantId, threadId)) ?? []).filter((m) => m.tenantId === tenantId);
+  }
+
+  async listRoutes(tenantId: string): Promise<RouteRecord[]> {
+    return [...this.routes.values()].filter((route) => route.tenantId === tenantId);
+  }
+
+  async getLimitsRecord(tenantId: string): Promise<TenantLimitsRecord | null> {
+    this.reads.limits += 1;
+    return this.limits.get(tenantId) ?? null;
+  }
+
+  async putLimitsRecord(record: TenantLimitsRecord): Promise<void> {
+    this.limits.set(record.tenantId, record);
+  }
+
+  async bumpConfigVersion(tenantId: string, nowMs: number): Promise<number> {
+    const existing = this.limits.get(tenantId);
+    const next: TenantLimitsRecord = existing
+      ? {
+          ...existing,
+          configVersion: existing.configVersion + 1,
+          updatedAt: new Date(nowMs).toISOString(),
+        }
+      : {
+          tenantId,
+          configVersion: 1,
+          override: {},
+          updatedAt: new Date(nowMs).toISOString(),
+        };
+    this.limits.set(tenantId, next);
+    return next.configVersion;
+  }
+
+  async tryClaimFlag(pk: string, _ttlSeconds: number, _nowMs: number): Promise<boolean> {
+    this.writes.flags += 1;
+    if (this.flags.has(pk)) return false;
+    this.flags.set(pk, true);
+    return true;
+  }
+
+  async tryConsumeMessageQuota(
+    tenantId: string,
+    minuteLimit: number,
+    dayLimit: number,
+    nowMs: number,
+  ): Promise<boolean> {
+    this.writes.quota += 1;
+    const pk = rateDayPk(tenantId, utcDayKey(nowMs));
+    const minute = minuteBucket(nowMs);
+    const item = this.quota.get(pk) ?? { dayCount: 0, minuteBucket: minute, minuteCount: 0 };
+    if (item.minuteBucket !== minute) {
+      if (item.dayCount >= dayLimit) return false;
+      item.minuteBucket = minute;
+      item.minuteCount = 0;
+    }
+    if (item.dayCount >= dayLimit || item.minuteCount >= minuteLimit) return false;
+    item.dayCount += 1;
+    item.minuteCount += 1;
+    this.quota.set(pk, item);
+    return true;
+  }
+
+  async getMessageQuotaUsage(
+    tenantId: string,
+    nowMs: number,
+  ): Promise<{ dayCount: number; minuteCount: number; minuteBucket: number | null }> {
+    const item = this.quota.get(rateDayPk(tenantId, utcDayKey(nowMs)));
+    if (!item) return { dayCount: 0, minuteCount: 0, minuteBucket: null };
+    const minute = minuteBucket(nowMs);
+    return {
+      dayCount: item.dayCount,
+      minuteCount: item.minuteBucket === minute ? item.minuteCount : 0,
+      minuteBucket: item.minuteBucket,
+    };
   }
 }
 
@@ -259,13 +376,17 @@ export function createTestContext(args?: {
   replyUrl?: string;
   apiUrl?: string;
   dashboardUrl?: string;
-  nowMs?: number;
+  nowMs?: number | (() => number);
   seedDefaultSlack?: boolean;
+  cacheTtlMs?: number;
+  defaultLimits?: TenantLimits;
+  adminEmails?: string[];
 }): { ctx: AppContext; stores: MemoryStores; queue: MemoryQueue; tenantSecrets: MemoryTenantSecrets } {
   const stores = args?.stores ?? new MemoryStores();
   const queue = args?.queue ?? new MemoryQueue();
   const tenantSecrets = args?.tenantSecrets ?? new MemoryTenantSecrets();
   const secrets = args?.secrets ?? TEST_SECRETS;
+  const cacheTtlMs = args?.cacheTtlMs ?? 0;
   if (args?.seedDefaultSlack !== false) {
     stores.slackTeams.set(slackTeamPk("T0123456789"), {
       teamId: "T0123456789",
@@ -296,7 +417,11 @@ export function createTestContext(args?: {
         (async () => {
           throw new Error("fetch not mocked");
         }),
-      now: () => args?.nowMs ?? NOW_MS,
+      now:
+        typeof args?.nowMs === "function"
+          ? args.nowMs
+          : () => (typeof args?.nowMs === "number" ? args.nowMs : NOW_MS),
+      cache: new TtlCache(cacheTtlMs),
       config: {
         replyUrl: args?.replyUrl ?? "https://bridge.example/reply",
         apiUrl: args?.apiUrl ?? "https://bridge.example",
@@ -305,6 +430,9 @@ export function createTestContext(args?: {
         slackBotUserId: args?.slackBotUserId,
         eventTtlSeconds: 172800,
         threadTtlSeconds: 7776000,
+        defaultLimits: args?.defaultLimits ?? { ...DEFAULT_LIMITS },
+        adminEmails: args?.adminEmails ?? [],
+        settingsCacheTtlSeconds: Math.floor(cacheTtlMs / 1000),
       },
     },
   };

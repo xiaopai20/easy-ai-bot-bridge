@@ -65,6 +65,30 @@ export interface TenantRecord {
   createdAt: string;
 }
 
+export interface TenantLimits {
+  maxBots: number;
+  maxChannels: number;
+  maxRoutes: number;
+  messagesPerMinute: number;
+  messagesPerDay: number;
+  loopMessagesPerThreadPerMinute: number;
+}
+
+export type TenantLimitsOverride = Partial<TenantLimits>;
+
+export interface TenantLimitsRecord {
+  tenantId: string;
+  configVersion: number;
+  override: TenantLimitsOverride;
+  updatedAt: string;
+}
+
+export interface TenantUsage {
+  bots: number;
+  channels: number;
+  routes: number;
+}
+
 export interface BotRecord {
   tenantId: string;
   botId: string;
@@ -137,6 +161,9 @@ export interface RuntimeConfig {
   slackBotUserId?: string;
   eventTtlSeconds: number;
   threadTtlSeconds: number;
+  defaultLimits: TenantLimits;
+  adminEmails: string[];
+  settingsCacheTtlSeconds: number;
 }
 
 export interface BotWebhookPayload {

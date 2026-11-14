@@ -53,8 +53,60 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+export interface TenantLimits {
+  maxBots: number;
+  maxChannels: number;
+  maxRoutes: number;
+  messagesPerMinute: number;
+  messagesPerDay: number;
+  loopMessagesPerThreadPerMinute: number;
+}
+
+export type TenantLimitsOverride = Partial<TenantLimits>;
+
+export interface UsageSnapshot {
+  limits: TenantLimits;
+  override?: TenantLimitsOverride;
+  usage: { bots: number; channels: number; routes: number };
+  messages: { dayCount: number; minuteCount: number };
+}
+
 export function getMe() {
-  return api<{ user: { userId: string; email: string; name: string }; tenant: Tenant }>("/api/me");
+  return api<{
+    user: { userId: string; email: string; name: string };
+    tenant: Tenant;
+    isAdmin: boolean;
+    limits: TenantLimits;
+    usage: UsageSnapshot["usage"];
+    messages: UsageSnapshot["messages"];
+  }>("/api/me");
+}
+
+export function getUsage() {
+  return api<UsageSnapshot>("/api/usage");
+}
+
+export function getAdminTenant(tenantId: string) {
+  return api<{
+    tenant: Tenant;
+    limits: TenantLimits;
+    override: TenantLimitsOverride;
+    configVersion: number;
+    usage: UsageSnapshot["usage"];
+    messages: UsageSnapshot["messages"];
+  }>(`/api/admin/tenants/${tenantId}`);
+}
+
+export function patchAdminLimits(
+  tenantId: string,
+  body: { reset?: boolean } & Partial<Record<keyof TenantLimits, number | null>>,
+) {
+  return api<{
+    tenant: Tenant;
+    limits: TenantLimits;
+    override: TenantLimitsOverride;
+    configVersion: number;
+  }>(`/api/admin/tenants/${tenantId}/limits`, { method: "PATCH", body: JSON.stringify(body) });
 }
 
 export function listBots() {

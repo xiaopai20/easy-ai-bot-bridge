@@ -1,5 +1,8 @@
+import type { AppContext } from "../context";
 import { HttpError } from "./http";
 import { newId } from "./keys";
+import { assertCanCreateRoute, bumpTenantConfig } from "./limits";
+import { invalidateSlackTeamCache, invalidateWidgetTokenCache } from "./settings";
 import type { Stores, TenantSecrets } from "./stores";
 import type { Actor, BotRecord, ChannelRecord, TenantRecord } from "./types";
 
@@ -48,26 +51,55 @@ export async function requireOwnedChannel(
   return channel;
 }
 
+export function routeCoords(
+  channel: ChannelRecord,
+): { platform: string; workspaceId: string; channelId: string } | null {
+  if (channel.platform === "telegram") {
+    return null;
+  }
+  const workspaceId =
+    channel.platform === "slack" ? (channel.slackTeamId ?? channel.channelId) : channel.channelId;
+  const channelId = channel.platform === "slack" ? "*" : channel.channelId;
+  return { platform: channel.platform, workspaceId, channelId };
+}
+
 export async function writeChannelRoute(
   stores: Stores,
   channel: ChannelRecord,
   bot: BotRecord,
 ): Promise<void> {
-  if (channel.platform === "telegram") {
+  const coords = routeCoords(channel);
+  if (!coords) {
     return;
   }
-  const workspaceId =
-    channel.platform === "slack" ? (channel.slackTeamId ?? channel.channelId) : channel.channelId;
-  const slackChannel = channel.platform === "slack" ? "*" : channel.channelId;
   await stores.putRoute({
     tenantId: channel.tenantId,
-    platform: channel.platform,
-    workspaceId,
-    channelId: slackChannel,
+    platform: coords.platform,
+    workspaceId: coords.workspaceId,
+    channelId: coords.channelId,
     targetWebhookUrl: bot.webhookUrl,
     targetId: bot.botId,
     enabled: channel.enabled,
   });
+}
+
+export async function publishChannelRoute(
+  ctx: AppContext,
+  channel: ChannelRecord,
+  bot: BotRecord,
+): Promise<void> {
+  const coords = routeCoords(channel);
+  if (coords) {
+    await assertCanCreateRoute(ctx, channel.tenantId, coords);
+  }
+  await writeChannelRoute(ctx.stores, channel, bot);
+  await bumpTenantConfig(ctx, channel.tenantId);
+  if (channel.platform === "slack" && channel.slackTeamId) {
+    invalidateSlackTeamCache(ctx, channel.slackTeamId);
+  }
+  if (channel.widgetToken) {
+    invalidateWidgetTokenCache(ctx, channel.widgetToken);
+  }
 }
 
 export async function removeChannelSideEffects(

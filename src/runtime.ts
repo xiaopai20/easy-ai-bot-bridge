@@ -3,11 +3,13 @@ import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { SQSClient } from "@aws-sdk/client-sqs";
 import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
 import type { AppContext } from "./context";
+import { TtlCache } from "./lib/cache";
 import { loadConfigFromEnv } from "./lib/config";
+import { DEFAULT_LIMITS } from "./lib/limits";
 import { DynamoStores } from "./lib/dynamo";
 import { createSecretsLoader } from "./lib/secrets";
 import { createSqsEnqueue } from "./lib/sqs";
-import { MemoryTenantSecrets, SecretsManagerTenantSecrets } from "./lib/tenant-secrets";
+import { CachingTenantSecrets, MemoryTenantSecrets, SecretsManagerTenantSecrets } from "./lib/tenant-secrets";
 import type { Stores } from "./lib/stores";
 
 let cached: AppContext | undefined;
@@ -21,6 +23,7 @@ export function createRuntimeContext(): AppContext {
 function buildRuntimeContext(): AppContext {
   const hasAwsEnv = Boolean(process.env.SECRET_ARN || process.env.EVENTS_TABLE);
   if (!hasAwsEnv) {
+    const cache = new TtlCache(0);
     return {
       stores: missingStores(),
       tenantSecrets: new MemoryTenantSecrets(),
@@ -32,6 +35,7 @@ function buildRuntimeContext(): AppContext {
       },
       fetch,
       now: () => Date.now(),
+      cache,
       config: {
         replyUrl: "",
         apiUrl: "",
@@ -39,6 +43,9 @@ function buildRuntimeContext(): AppContext {
         corsOrigin: "*",
         eventTtlSeconds: 172800,
         threadTtlSeconds: 7776000,
+        defaultLimits: DEFAULT_LIMITS,
+        adminEmails: [],
+        settingsCacheTtlSeconds: 0,
       },
     };
   }
@@ -50,6 +57,8 @@ function buildRuntimeContext(): AppContext {
   });
   const sqs = new SQSClient({ region });
   const secrets = new SecretsManagerClient({ region });
+  const cache = new TtlCache(config.settingsCacheTtlSeconds * 1000);
+  const now = () => Date.now();
 
   return {
     stores: new DynamoStores(ddb, {
@@ -59,15 +68,16 @@ function buildRuntimeContext(): AppContext {
       directory: config.directoryTable,
       inbox: config.inboxTable,
     }),
-    tenantSecrets: new SecretsManagerTenantSecrets(
-      secrets,
-      config.tenantSecretPrefix,
-      config.tenantKmsKeyId,
+    tenantSecrets: new CachingTenantSecrets(
+      new SecretsManagerTenantSecrets(secrets, config.tenantSecretPrefix, config.tenantKmsKeyId),
+      cache,
+      now,
     ),
     enqueue: createSqsEnqueue(sqs, config.queueUrl),
     getSecrets: createSecretsLoader(secrets, config.secretArn),
     fetch,
-    now: () => Date.now(),
+    now,
+    cache,
     config: {
       replyUrl: config.replyUrl,
       apiUrl: config.apiUrl,
@@ -76,6 +86,9 @@ function buildRuntimeContext(): AppContext {
       slackBotUserId: config.slackBotUserId,
       eventTtlSeconds: config.eventTtlSeconds,
       threadTtlSeconds: config.threadTtlSeconds,
+      defaultLimits: config.defaultLimits,
+      adminEmails: config.adminEmails,
+      settingsCacheTtlSeconds: config.settingsCacheTtlSeconds,
     },
   };
 }
@@ -92,6 +105,7 @@ function missingStores(): Stores {
     deleteRoute: fail,
     putThread: fail,
     getThread: fail,
+    upsertThreadAndConsumeLoop: fail,
     getTenant: fail,
     putTenant: fail,
     getUserTenantId: fail,
@@ -112,5 +126,12 @@ function missingStores(): Stores {
     deleteWidgetTokenMapping: fail,
     putInboxMessage: fail,
     listInboxMessages: fail,
-  } as unknown as Stores;
+    listRoutes: fail,
+    getLimitsRecord: fail,
+    putLimitsRecord: fail,
+    bumpConfigVersion: fail,
+    tryClaimFlag: fail,
+    tryConsumeMessageQuota: fail,
+    getMessageQuotaUsage: fail,
+  };
 }

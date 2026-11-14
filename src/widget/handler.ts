@@ -3,6 +3,7 @@ import type { AppContext } from "../context";
 import { handleError, HttpError, json, parseJsonBody, queryParam, rawBody } from "../lib/http";
 import { newId } from "../lib/keys";
 import { enqueueInbound } from "../lib/pipeline";
+import { getChannelCached, getWidgetTokenMappingCached } from "../lib/settings";
 import { createRuntimeContext } from "../runtime";
 import { widgetEmbedScript } from "./embed";
 
@@ -54,11 +55,11 @@ async function ingestWidget(
   if (!token) throw new HttpError(400, "Missing widget token");
   if (!text) throw new HttpError(400, "Missing text");
 
-  const mapping = await ctx.stores.getWidgetTokenMapping(token);
+  const mapping = await getWidgetTokenMappingCached(ctx, token);
   if (!mapping) {
     throw new HttpError(401, "Unknown widget token");
   }
-  const channel = await ctx.stores.getChannel(mapping.tenantId, mapping.channelId);
+  const channel = await getChannelCached(ctx, mapping.tenantId, mapping.channelId);
   if (!channel || !channel.enabled || channel.platform !== "widget") {
     throw new HttpError(404, "Widget channel not found");
   }
@@ -100,7 +101,7 @@ async function listMessages(
   if (!token || !clientThread) {
     throw new HttpError(400, "Missing token or thread");
   }
-  const mapping = await ctx.stores.getWidgetTokenMapping(token);
+  const mapping = await getWidgetTokenMappingCached(ctx, token);
   if (!mapping) {
     throw new HttpError(401, "Unknown widget token");
   }
