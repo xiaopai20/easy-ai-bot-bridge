@@ -1,20 +1,22 @@
 # easy-ai-bot-bridge
 
-Small, self-hostable **bridges** between chat platforms and AI bot webhooks (e.g. a Grok Bot routine with an HTTP trigger). Each bridge lives in its own folder with its own CDK stack. Deploy only what you need.
+A growing collection of small, self-hostable **bridges** between chat platforms and AI bot webhooks (e.g. a Grok Bot routine with an HTTP trigger). Each bridge is a standalone CDK app under `relay/`. Deploy only what you need.
+
+**Today:** [`relay/slack-webhook-relay`](relay/slack-webhook-relay/) is the first bridge. More may appear as siblings under `relay/` later.
 
 ## The problem
 
-You want your AI bot to power a **Slack agent**: someone @-mentions the app or DMs it, the bot thinks, and the answer appears in the thread. Slack's Events API can POST to your endpoint, but that does not map cleanly onto a typical bot webhook:
+You want your AI bot to power a **Slack agent**: someone @-mentions the app or DMs it, the bot thinks, and the answer appears in the thread. Slack's Events API can POST to your URL, but that does not fit a typical bot webhook:
 
 | Slack needs | Typical bot webhook expects |
 | --- | --- |
 | `url_verification` challenge echoed as plaintext | JSON API |
 | HTTP 200 within ~3 seconds | May run longer |
 | Retries on slow responses | Duplicate work if you forward again |
-| No custom `Authorization: Bearer` header on the Event URL | Bearer token on every call |
+| No custom `Authorization: Bearer` on the Event URL | Bearer token on every call |
 | Risk of bot-message loops | N/A |
 
-**slack-webhook-relay** sits in the middle: verify Slack's signature, answer the challenge, ack fast, drop retries and bot messages, and forward a small JSON body to your webhook with `Authorization: Bearer`. Your bot posts back to Slack itself via [`chat.postMessage`](https://api.slack.com/methods/chat.postMessage) (`channel` + `thread_ts`).
+**slack-webhook-relay** verifies Slack's signature, answers the challenge, acks fast, drops retries and bot messages, and forwards a small JSON body with `Authorization: Bearer`. Your bot posts back to Slack via [`chat.postMessage`](https://api.slack.com/methods/chat.postMessage) using `channel` and `thread_ts` (token lives in the bot, not in the relay).
 
 ## Flow
 
@@ -41,12 +43,10 @@ sequenceDiagram
 | **slack-webhook-relay** | [`relay/slack-webhook-relay/`](relay/slack-webhook-relay/) | Available. One workspace, Lambda Function URL, ~$0.40/mo idle (Secrets Manager). |
 | *(more planned)* | `relay/...` | Not yet. |
 
-Details, routine prompt, and layout: [`relay/slack-webhook-relay/README.md`](relay/slack-webhook-relay/README.md).
+## Quick start
 
-## Quick start (slack-webhook-relay)
-
-1. **Slack app** (single workspace): Bot scopes `app_mentions:read`, `chat:write`, `im:history`. Bot events `app_mention`, `message.im`. Install and note the signing secret; store the **bot token** in your Grok Bot (the relay does not need it).
-2. **Deploy**
+1. **Slack app** (one workspace): Bot scopes `app_mentions:read`, `chat:write`, `im:history`. Bot events `app_mention`, `message.im`. Install the app; keep the **signing secret** for the relay and the **bot token** in your Grok Bot.
+2. **Deploy and test**
 
    ```bash
    cd relay/slack-webhook-relay
@@ -54,8 +54,10 @@ Details, routine prompt, and layout: [`relay/slack-webhook-relay/README.md`](rel
    npx cdk deploy
    ```
 
-3. **Secret** (output `SecretArn`): `SLACK_SIGNING_SECRET`, `WEBHOOK_URL`, `WEBHOOK_KEY` for your routine webhook.
-4. **Event Subscriptions**: Request URL = CloudFormation output `FunctionUrl`. Set this **after** the secret is filled so `url_verification` succeeds.
+3. **Secret** (output `SecretArn`): `SLACK_SIGNING_SECRET`, `WEBHOOK_URL`, `WEBHOOK_KEY`.
+4. **Event Subscriptions**: Request URL = output `FunctionUrl` (set after the secret is filled so `url_verification` succeeds).
+
+Step-by-step Slack setup, routine prompt, env-var mode, and layout: [`relay/slack-webhook-relay/README.md`](relay/slack-webhook-relay/README.md).
 
 ## Payload your bot receives
 
@@ -72,22 +74,11 @@ Details, routine prompt, and layout: [`relay/slack-webhook-relay/README.md`](rel
 }
 ```
 
-Answer `text`, then post to Slack with your bot token. See the relay README for a copy-paste routine prompt.
-
 ## Security
 
-- The relay holds the **signing secret** and **webhook bearer key**, not the Slack bot token.
-- Anyone in the workspace who can talk to the app can trigger your bot. Use a **dedicated bot** without access to personal or sensitive data.
-- Keep AWS and Slack credentials in Secrets Manager or env vars; never commit them.
-
-## Multi-tenant bridge (experimental)
-
-The repo root also contains a **paused** multi-tenant design: Cognito Google login API, DynamoDB, SQS, and per-tenant routing (`lib/`, `src/`). It is **experimental and unsupported** -- not documented for production, not the focus of this collection. Use **slack-webhook-relay** unless you plan to fork and operate the full stack yourself.
-
-```bash
-# optional: run unit tests for the experimental stack
-npm ci && npm test
-```
+- The relay stores the **signing secret** and **webhook bearer key**, not the Slack bot token.
+- Anyone in the workspace who can talk to the app can trigger your bot. Use a **dedicated bot** without personal or sensitive data.
+- Do not commit secrets or production URLs.
 
 ## License
 

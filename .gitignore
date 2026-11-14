@@ -1,5 +1,4 @@
 node_modules/
-dist/
 cdk.out/
 relay/**/node_modules/
 relay/**/cdk.out/

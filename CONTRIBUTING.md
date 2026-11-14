@@ -6,21 +6,18 @@ Thanks for your interest in this project.
 
 - Keep changes small and focused.
 - Use English and ASCII in source, docs, and commit messages.
-- Run tests for the area you touched:
+- Run tests for the bridge you changed:
 
   ```bash
-  cd relay/slack-webhook-relay && npm test
-  # and/or at repo root:
-  npm test
+  cd relay/slack-webhook-relay
+  npm ci && npm test
   ```
 
 - Do not commit secrets, real Slack tokens, AWS account IDs, or production URLs.
 
 ## Scope
 
-**Supported:** bridges under `relay/` (starting with `slack-webhook-relay`).
-
-**Experimental / unsupported:** the multi-tenant stack at the repo root (`lib/`, `src/`). Fixes are welcome but there is no commitment to maintain or deploy it.
+New bridges should live under `relay/<name>/` as self-contained CDK apps, with their own `package.json` and tests.
 
 ## License
 
