@@ -9,8 +9,8 @@ Thanks for your interest in this project.
 - Run tests for the bridge you changed:
 
   ```bash
-  cd relay/slack-webhook-relay
-  npm ci && npm test
+  cd relay/slack-webhook-relay && npm ci && npm test
+  cd relay/telegram-webhook-relay && npm ci && npm test
   ```
 
 - Do not commit secrets, real Slack tokens, AWS account IDs, or production URLs.

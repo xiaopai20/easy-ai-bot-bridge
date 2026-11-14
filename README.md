@@ -2,82 +2,73 @@
 
 A growing collection of small, self-hostable **bridges** between chat platforms and AI bot webhooks (e.g. a Grok Bot routine with an HTTP trigger). Each bridge is a standalone CDK app under `relay/`. Deploy only what you need.
 
-**Today:** [`relay/slack-webhook-relay`](relay/slack-webhook-relay/) is the first bridge. More may appear as siblings under `relay/` later.
-
 ## The problem
 
-You want your AI bot to power a **Slack agent**: someone @-mentions the app or DMs it, the bot thinks, and the answer appears in the thread. Slack's Events API can POST to your URL, but that does not fit a typical bot webhook:
+You want your AI bot to power a **chat agent** on Slack or Telegram. The platform can POST events to your URL, but that does not match what a typical bot webhook expects:
 
-| Slack needs | Typical bot webhook expects |
+| Platform constraint | Typical bot webhook |
 | --- | --- |
-| `url_verification` challenge echoed as plaintext | JSON API |
-| HTTP 200 within ~3 seconds | May run longer |
-| Retries on slow responses | Duplicate work if you forward again |
-| No custom `Authorization: Bearer` on the Event URL | Bearer token on every call |
-| Risk of bot-message loops | N/A |
+| Custom auth headers the platform supports (Slack signing secret, Telegram `secret_token`) | `Authorization: Bearer` on every call |
+| Platform-specific JSON (`url_verification`, Telegram `Update` objects) | Small, stable JSON you control |
+| Fast HTTP 200 or the platform retries | May run longer than a few seconds |
+| Loops from bot messages | N/A |
 
-**slack-webhook-relay** verifies Slack's signature, answers the challenge, acks fast, drops retries and bot messages, and forwards a small JSON body with `Authorization: Bearer`. Your bot posts back to Slack via [`chat.postMessage`](https://api.slack.com/methods/chat.postMessage) using `channel` and `thread_ts` (token lives in the bot, not in the relay).
+**Bridges** verify the platform, ack quickly, filter noise (retries, bots, non-allowlisted users where configured), and POST a **normalized JSON body** to your webhook with `Authorization: Bearer`. Your bot sends replies with the **platform bot token** (`chat.postMessage`, `sendMessage`), stored in the AI bot, not in the relay.
 
-## Flow
+### Slack ([`slack-webhook-relay`](relay/slack-webhook-relay/))
+
+Slack needs a `url_verification` challenge, answers within ~3s, cannot send Bearer to the Event URL, and may retry. See the Slack bridge README for scopes and routine prompt.
+
+### Telegram ([`telegram-webhook-relay`](relay/telegram-webhook-relay/))
+
+Telegram webhooks send `X-Telegram-Bot-Api-Secret-Token`, not Bearer auth, and wrap messages in `Update` objects. This relay maps that to your bot webhook and lets you **allowlist** which Telegram user ids may trigger the bot.
+
+## Flow (Telegram example)
 
 ```mermaid
 sequenceDiagram
-  participant U as Slack user
-  participant S as Slack Events API
-  participant R as slack-webhook-relay
+  participant U as Telegram user
+  participant T as Telegram
+  participant R as telegram-webhook-relay
   participant B as Your bot webhook
-  participant API as Slack Web API
-  U->>S: mention or DM
-  S->>R: POST event (signed)
-  R->>R: verify, filter bots/retries
-  R-->>S: 200 OK (under 3s)
+  participant API as Telegram Bot API
+  U->>T: message
+  T->>R: POST Update + secret header
+  R->>R: verify, allowlist, dedupe
+  R-->>T: 200 OK
   R->>B: POST JSON + Bearer
-  B->>API: chat.postMessage
-  API-->>U: reply in thread
+  B->>API: sendMessage
+  API-->>U: reply
 ```
 
 ## Bridges
 
 | Bridge | Path | Status |
 | --- | --- | --- |
-| **slack-webhook-relay** | [`relay/slack-webhook-relay/`](relay/slack-webhook-relay/) | Available. One workspace, Lambda Function URL, ~$0.40/mo idle (Secrets Manager). |
+| **slack-webhook-relay** | [`relay/slack-webhook-relay/`](relay/slack-webhook-relay/) | Available. One Slack workspace, Lambda Function URL. |
+| **telegram-webhook-relay** | [`relay/telegram-webhook-relay/`](relay/telegram-webhook-relay/) | Available. One Telegram bot, allowlisted users, Lambda Function URL. |
 | *(more planned)* | `relay/...` | Not yet. |
 
 ## Quick start
 
-1. **Slack app** (one workspace): Bot scopes `app_mentions:read`, `chat:write`, `im:history`. Bot events `app_mention`, `message.im`. Install the app; keep the **signing secret** for the relay and the **bot token** in your Grok Bot.
-2. **Deploy and test**
+Pick a bridge, then:
 
-   ```bash
-   cd relay/slack-webhook-relay
-   npm ci && npm test
-   npx cdk deploy
-   ```
-
-3. **Secret** (output `SecretArn`): `SLACK_SIGNING_SECRET`, `WEBHOOK_URL`, `WEBHOOK_KEY`.
-4. **Event Subscriptions**: Request URL = output `FunctionUrl` (set after the secret is filled so `url_verification` succeeds).
-
-Step-by-step Slack setup, routine prompt, env-var mode, and layout: [`relay/slack-webhook-relay/README.md`](relay/slack-webhook-relay/README.md).
-
-## Payload your bot receives
-
-```json
-{
-  "source": "slack",
-  "team": "T0123456789",
-  "channel": "C0LAN2Q65",
-  "user": "U111",
-  "text": "What is the weather today?",
-  "ts": "1731448800.000100",
-  "thread_ts": "1731448800.000100",
-  "event_id": "Ev01ABC"
-}
+```bash
+cd relay/<bridge-name>
+npm ci && npm test
+npx cdk deploy
 ```
+
+Configure secrets and platform webhooks per bridge README:
+
+- Slack: [`relay/slack-webhook-relay/README.md`](relay/slack-webhook-relay/README.md)
+- Telegram: [`relay/telegram-webhook-relay/README.md`](relay/telegram-webhook-relay/README.md)
 
 ## Security
 
-- The relay stores the **signing secret** and **webhook bearer key**, not the Slack bot token.
-- Anyone in the workspace who can talk to the app can trigger your bot. Use a **dedicated bot** without personal or sensitive data.
+- Relays hold **platform verification secrets** and **webhook bearer keys**, not the Slack/Telegram **bot tokens** used to post replies.
+- Restrict who can trigger the bot (Slack: workspace membership; Telegram: `ALLOWED_USER_IDS`).
+- Use a dedicated bot without personal or sensitive data.
 - Do not commit secrets or production URLs.
 
 ## License
