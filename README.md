@@ -82,7 +82,7 @@ Answer `text`, then post to Slack with your bot token. See the relay README for 
 
 ## Multi-tenant bridge (experimental)
 
-The repo root also contains a **paused** multi-tenant design: Google login, dashboard (`apps/web`), DynamoDB, SQS, and per-tenant routing (`lib/`, `src/`). It is **experimental and unsupported** -- not documented for production, not the focus of this collection. Use **slack-webhook-relay** unless you plan to fork and operate the full stack yourself.
+The repo root also contains a **paused** multi-tenant design: Cognito Google login API, DynamoDB, SQS, and per-tenant routing (`lib/`, `src/`). It is **experimental and unsupported** -- not documented for production, not the focus of this collection. Use **slack-webhook-relay** unless you plan to fork and operate the full stack yourself.
 
 ```bash
 # optional: run unit tests for the experimental stack

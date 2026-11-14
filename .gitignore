@@ -3,8 +3,6 @@ dist/
 cdk.out/
 relay/**/node_modules/
 relay/**/cdk.out/
-apps/web/.next/
-apps/web/out/
 .cdk.staging/
 coverage/
 *.log

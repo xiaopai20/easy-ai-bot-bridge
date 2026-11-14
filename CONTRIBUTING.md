@@ -20,7 +20,7 @@ Thanks for your interest in this project.
 
 **Supported:** bridges under `relay/` (starting with `slack-webhook-relay`).
 
-**Experimental / unsupported:** the multi-tenant stack at the repo root (`apps/web`, `lib/`, `src/`). Fixes are welcome but there is no commitment to maintain or deploy it.
+**Experimental / unsupported:** the multi-tenant stack at the repo root (`lib/`, `src/`). Fixes are welcome but there is no commitment to maintain or deploy it.
 
 ## License
 
