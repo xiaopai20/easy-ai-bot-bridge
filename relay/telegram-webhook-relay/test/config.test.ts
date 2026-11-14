@@ -1,4 +1,10 @@
-import { resolveAllowlistFromEnv } from "../src/config";
+import { vi } from "vitest";
+import type { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
+import { loadConfig, resetConfigCache, resolveAllowlistFromEnv } from "../src/config";
+
+beforeEach(() => {
+  resetConfigCache();
+});
 
 describe("resolveAllowlistFromEnv", () => {
   it("allow all when ALLOWED_USER_IDS is unset or empty", () => {
@@ -19,5 +25,30 @@ describe("resolveAllowlistFromEnv", () => {
     const result = resolveAllowlistFromEnv({ ALLOWED_USER_IDS: "1001, 1002" });
     expect(result.allowAllUsers).toBe(false);
     expect(result.allowedUserIds).toEqual(new Set([1001, 1002]));
+  });
+});
+
+describe("loadConfig with SECRET_ARN", () => {
+  it("loads webhook URL from env and secrets from Secrets Manager", async () => {
+    const send = vi.fn().mockResolvedValue({
+      SecretString: JSON.stringify({
+        TELEGRAM_WEBHOOK_SECRET: "tg-webhook-secret",
+        WEBHOOK_KEY: "bearer-from-sm",
+      }),
+    });
+    const client = { send } as unknown as SecretsManagerClient;
+
+    const cfg = await loadConfig({
+      env: {
+        SECRET_ARN: "arn:aws:secretsmanager:us-east-1:123456789012:secret:test",
+        WEBHOOK_URL: "https://grok.example/routine",
+      },
+      client,
+    });
+
+    expect(send).toHaveBeenCalled();
+    expect(cfg.telegramWebhookSecret).toBe("tg-webhook-secret");
+    expect(cfg.webhookKey).toBe("bearer-from-sm");
+    expect(cfg.webhookUrl).toBe("https://grok.example/routine");
   });
 });
