@@ -48,6 +48,18 @@ npx cdk bootstrap aws://$AWS_ACCOUNT_ID/$CDK_DEFAULT_REGION
 npx cdk deploy
 ```
 
+### Deploying multiple instances
+
+Deploy one stack per Slack workspace (or environment) in the same account and
+region. Pass a unique CloudFormation stack name with `-c stackName=...`. Construct
+IDs are unchanged; each stack gets its own secret, Lambda, log group, and Function URL.
+
+```bash
+npx cdk deploy SlackWebhookRelay -c stackName=EasyAiSlackRelayWorkspaceB
+```
+
+Without `-c stackName`, the stack name stays **SlackWebhookRelay**.
+
 Outputs:
 
 | Name | Use |

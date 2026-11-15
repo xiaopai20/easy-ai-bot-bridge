@@ -62,6 +62,22 @@ npx cdk deploy \
   -c allowedUserIds="1001,1002"
 ```
 
+### Deploying multiple instances
+
+Deploy one stack per Telegram bot in the same account and region. Pass a unique
+CloudFormation stack name with `-c stackName=...`. CDK construct IDs are unchanged,
+so redeploying the default stack behaves as before; each stack gets its own secret,
+Lambda, log group, and Function URL.
+
+```bash
+npx cdk deploy TelegramWebhookRelay \
+  -c stackName=EasyAiTelegramRelayFamily \
+  -c webhookUrl="https://your-grok-bot.example/routine-family" \
+  -c allowedUserIds="111,222"
+```
+
+Without `-c stackName`, the stack name stays **TelegramWebhookRelay**.
+
 Outputs:
 
 | Name | Use |
